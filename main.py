@@ -1,138 +1,362 @@
 """
-MAIN SIMPLE - Para entender cómo funciona
-Cada laptop ejecuta este programa
+MAIN.PY COMPLETO - Con menú interactivo
 """
 import time
 from src.networking import TCPServer
-from src. protocol import Message, MessageType
+from src.overlay import ChordNode
+from src.protocol import Message, MessageType
+
+# Variables globales
+chord = None
+pepe = None
+local_storage = {}  # Almacenamiento local simple
 
 def handle_incoming_message(msg:  dict, addr: tuple):
-    """Se ejecuta cuando llega un mensaje"""
+    """
+    Callback que se ejecuta cuando llega un mensaje al servidor. 
+    """
+    msg_type = msg. get("type", "")
+    
+    # MENSAJES CHORD (internos)
+    if msg_type. startswith("CHORD_"):
+        response = chord.handle_message(msg)
+        if response: 
+            pepe.send_message(addr[0], addr[1], response)
+    
+    # MENSAJES DE APLICACIÓN (los que TÚ envías)
+    else:
+        print(f"\n{'='*60}")
+        print(f"📨 MENSAJE RECIBIDO")
+        print(f"{'='*60}")
+        print(f"De: {addr[0]}:{addr[1]}")
+        print(f"Tipo: {msg_type}")
+        print(f"Remitente: {msg.get('sender_id', 'desconocido')}")
+        print(f"Datos: {msg.get('data', {})}")
+        print(f"{'='*60}\n")
+        print(">>> ", end="", flush=True)  # Volver a mostrar prompt
+        
+        # Procesar según tipo
+        if msg_type == "JOIN":
+            handle_join_app(msg, addr)
+        elif msg_type == "PUT": 
+            handle_put(msg, addr)
+        elif msg_type == "GET":
+            handle_get(msg, addr)
+        elif msg_type == "HEARTBEAT":
+            handle_heartbeat(msg, addr)
+
+def handle_join_app(msg, addr):
+    """Maneja mensaje JOIN de aplicación"""
+    sender_id = msg.get('sender_id')
+    data = msg.get('data', {})
+    
+    print(f"🤝 {sender_id} se quiere unir a la red")
+    
+    # Responder con bienvenida
+    response = Message(
+        msg_type=MessageType.UPDATE,
+        sender_id=chord.node_id[: 8],
+        data={
+            "mensaje": "¡Bienvenido a la red!",
+            "mi_id": chord.node_id[:8],
+            "nodos_en_anillo": "Al menos 2 (tú y yo)"
+        }
+    )
+    pepe.send_message(addr[0], addr[1], response. to_dict())
+
+def handle_put(msg, addr):
+    """Maneja operación PUT"""
+    data = msg.get('data', {})
+    key = data.get('key')
+    value = data.get('value')
+    
+    if not key: 
+        return
+    
+    # Determinar quién es responsable según Chord
+    responsible = chord.get_responsible_node(key)
+    
+    if responsible and responsible[2] == chord.node_id:
+        # YO soy responsable:  guardar localmente
+        local_storage[key] = value
+        print(f"💾 Guardado:  {key} = {value}")
+        
+        # Responder con confirmación
+        response = Message(
+            msg_type=MessageType. RESULT,
+            sender_id=chord.node_id[:8],
+            data={
+                "key": key,
+                "status": "stored",
+                "node":  chord.node_id[: 8]
+            }
+        )
+        pepe.send_message(addr[0], addr[1], response.to_dict())
+    else:
+        # NO soy responsable: reenviar al nodo correcto
+        if responsible:
+            print(f"↪️ Reenviando PUT a nodo {responsible[2][: 8]}...")
+            pepe.send_message(responsible[0], responsible[1], msg)
+
+def handle_get(msg, addr):
+    """Maneja operación GET"""
+    data = msg.get('data', {})
+    key = data.get('key')
+    
+    if not key:
+        return
+    
+    # Determinar quién es responsable
+    responsible = chord.get_responsible_node(key)
+    
+    if responsible and responsible[2] == chord.node_id:
+        # YO soy responsable: buscar localmente
+        value = local_storage.get(key)
+        
+        print(f"🔍 Buscando: {key} → {value if value else 'NO ENCONTRADO'}")
+        
+        response = Message(
+            msg_type=MessageType.RESULT,
+            sender_id=chord.node_id[:8],
+            data={
+                "key": key,
+                "value": value,
+                "found": value is not None,
+                "node": chord.node_id[:8]
+            }
+        )
+        pepe.send_message(addr[0], addr[1], response.to_dict())
+    else:
+        # NO soy responsable: reenviar
+        if responsible:
+            print(f"↪️ Reenviando GET a nodo {responsible[2][:8]}...")
+            pepe.send_message(responsible[0], responsible[1], msg)
+
+def handle_heartbeat(msg, addr):
+    """Maneja HEARTBEAT"""
+    sender_id = msg.get('sender_id')
+    print(f"💓 HEARTBEAT de {sender_id}")
+
+def mostrar_menu():
+    """Muestra el menú de comandos"""
     print(f"\n{'='*60}")
-    print(f"📨 MENSAJE RECIBIDO de {addr[0]}:{addr[1]}")
+    print("COMANDOS DISPONIBLES")
     print(f"{'='*60}")
-    print(f"Tipo: {msg. get('type')}")
-    print(f"De: {msg.get('sender_id')}")
-    print(f"Datos: {msg.get('data')}")
+    print("  join <ip> <puerto>           - Enviar JOIN a otro nodo")
+    print("  put <clave> <valor>          - Guardar datos (usa Chord)")
+    print("  get <clave>                  - Buscar datos (usa Chord)")
+    print("  send <ip> <puerto> <mensaje> - Enviar mensaje libre")
+    print("  heartbeat <ip> <puerto>      - Enviar heartbeat")
+    print("  storage                      - Ver datos almacenados localmente")
+    print("  status                       - Ver estado del nodo Chord")
+    print("  help                         - Mostrar este menú")
+    print("  quit                         - Salir")
     print(f"{'='*60}\n")
 
 def main():
+    global chord, pepe, local_storage
+    
     print("""
 ╔══════════════════════════════════════════════════════════╗
-║           NODO P2P - LABORATORIO DISTRIBUIDO             ║
+║       LABORATORIO DISTRIBUIDO - SISTEMA P2P CHORD        ║
+║         Networking + Protocol + Overlay Integrados       ║
 ╚══════════════════════════════════════════════════════════╝
     """)
     
-    # CONFIGURACIÓN
-    print("📝 Configuración de tu nodo:")
-    mi_puerto = input("Puerto para escuchar (ej: 5000): ").strip()
+    # Configuración
+    print("Configuración del nodo:")
+    mi_ip = input("Tu IP (0.0.0.0 para escuchar en todas): ").strip() or "0.0.0.0"
+    mi_puerto = input("Tu puerto (default 5000): ").strip()
     mi_puerto = int(mi_puerto) if mi_puerto else 5000
     
-    # CREAR SERVIDOR (Módulo 1)
-    servidor = TCPServer('0.0.0.0', mi_puerto, handle_incoming_message)
-    servidor.start()
+    # Crear servidor TCP (Módulo 1)
+    pepe = TCPServer(mi_ip, mi_puerto, handle_incoming_message)
+    pepe.start()
     
-    print(f"\n✅ Tu nodo está escuchando en puerto {mi_puerto}")
-    print(f"💡 Tu IP: [Averigua con ipconfig/ifconfig]")
-    print(f"\n{'='*60}")
+    # Crear nodo Chord (Módulo 3)
+    chord = ChordNode(mi_ip, mi_puerto)
+    chord.set_send_callback(pepe.send_message)
     
-    # ESPERAR A QUE EL SERVIDOR INICIE
+    print("\nEsperando que el servidor inicie...")
     time.sleep(2)
     
-    # MENÚ INTERACTIVO
-    print("\nCOMANDOS:")
-    print("  enviar  - Enviar un mensaje a otro nodo")
-    print("  test    - Enviar mensaje a ti mismo (prueba)")
-    print("  quit    - Salir")
-    print("="*60 + "\n")
+    # Menú para unirse al anillo Chord
+    join = input("\n¿Unirse a un anillo Chord existente? (s/n): ").strip().lower()
     
+    if join == 's': 
+        ip_bootstrap = input("IP del nodo bootstrap:  ").strip()
+        port_bootstrap = input("Puerto del nodo bootstrap: ").strip()
+        port_bootstrap = int(port_bootstrap) if port_bootstrap else 5000
+        
+        print(f"\n⏳ Uniéndose al anillo Chord vía {ip_bootstrap}:{port_bootstrap}...")
+        chord.join_network((ip_bootstrap, port_bootstrap))
+        time.sleep(2)
+    else:
+        print("\n✅ Este es el primer nodo del anillo Chord")
+        chord.is_joined = True
+        chord.successor = (mi_ip, mi_puerto, chord.node_id)
+    
+    # Mostrar estado inicial
+    print(f"\n{'='*60}")
+    print("ESTADO INICIAL DEL NODO:")
+    info = chord.get_node_info()
+    print(f"ID Chord: {info['node_id'][: 16]}...")
+    print(f"IP: Puerto: {mi_ip}:{mi_puerto}")
+    print(f"Successor: {info['successor']}")
+    print(f"Predecessor: {info['predecessor']}")
+    print(f"En anillo: {info['is_joined']}")
+    print(f"{'='*60}")
+    
+    # Mostrar menú
+    mostrar_menu()
+    
+    # Loop interactivo
     try:
         while True:
-            comando = input(">>> ").strip().lower()
+            cmd = input(">>> ").strip().split()
             
-            if comando == "enviar":
-                print("\n📤 Enviar mensaje a otro nodo:")
-                ip_destino = input("  IP del nodo destino: ").strip()
-                puerto_destino = input("  Puerto del nodo destino: ").strip()
-                puerto_destino = int(puerto_destino) if puerto_destino else 5000
+            if not cmd:
+                continue
+            
+            comando = cmd[0]. lower()
+            
+            # ==================== JOIN ====================
+            if comando == "join" and len(cmd) >= 3:
+                ip_destino = cmd[1]
+                puerto_destino = int(cmd[2])
                 
-                # SELECCIONAR TIPO DE MENSAJE
-                print("\n  Tipo de mensaje:")
-                print("    1. JOIN")
-                print("    2. PUT")
-                print("    3. GET")
-                print("    4. HEARTBEAT")
-                tipo_opcion = input("  Selecciona (1-4): ").strip()
+                mensaje = Message(
+                    msg_type=MessageType.JOIN,
+                    sender_id=chord.node_id[:8],
+                    data={
+                        "ip": mi_ip,
+                        "port": mi_puerto,
+                        "nombre": f"Nodo_{mi_puerto}"
+                    }
+                )
                 
-                # CREAR MENSAJE USANDO EL MÓDULO 2 (Protocol) ✅
-                if tipo_opcion == "1":
-                    mensaje = Message(
-                        msg_type=MessageType.JOIN,
-                        sender_id=f"nodo_puerto_{mi_puerto}",
-                        data={
-                            "ip": "0.0.0.0",  # Tu IP
-                            "port": mi_puerto,
-                            "mensaje": "Hola, quiero unirme!"
-                        }
-                    )
+                print(f"📤 Enviando JOIN a {ip_destino}:{puerto_destino}...")
+                pepe.send_message(ip_destino, puerto_destino, mensaje.to_dict())
+            
+            # ==================== PUT ====================
+            elif comando == "put" and len(cmd) >= 3:
+                key = cmd[1]
+                value = " ".join(cmd[2:])
                 
-                elif tipo_opcion == "2": 
-                    clave = input("  Clave:  ").strip()
-                    valor = input("  Valor: ").strip()
+                print(f"\n📤 PUT: {key} = {value}")
+                
+                # Chord determina quién es responsable
+                responsible = chord.get_responsible_node(key)
+                
+                if responsible: 
+                    print(f"→ Nodo responsable: {responsible[2][:8]}...  ({responsible[0]}:{responsible[1]})")
+                    
                     mensaje = Message(
                         msg_type=MessageType.PUT,
-                        sender_id=f"nodo_puerto_{mi_puerto}",
-                        data={"key": clave, "value": valor}
+                        sender_id=chord. node_id[:8],
+                        data={"key": key, "value":  value}
                     )
+                    
+                    pepe.send_message(responsible[0], responsible[1], mensaje. to_dict())
+                else: 
+                    print("❌ No se pudo determinar nodo responsable")
+            
+            # ==================== GET ====================
+            elif comando == "get" and len(cmd) >= 2:
+                key = cmd[1]
                 
-                elif tipo_opcion == "3":
-                    clave = input("  Clave a buscar: ").strip()
+                print(f"\n🔍 GET: {key}")
+                
+                # Chord determina quién es responsable
+                responsible = chord.get_responsible_node(key)
+                
+                if responsible:
+                    print(f"→ Preguntando a nodo:  {responsible[2][:8]}... ({responsible[0]}:{responsible[1]})")
+                    
                     mensaje = Message(
                         msg_type=MessageType. GET,
-                        sender_id=f"nodo_puerto_{mi_puerto}",
-                        data={"key": clave}
+                        sender_id=chord.node_id[:8],
+                        data={"key": key}
                     )
-                
+                    
+                    pepe. send_message(responsible[0], responsible[1], mensaje.to_dict())
                 else:
-                    mensaje = Message(
-                        msg_type=MessageType.HEARTBEAT,
-                        sender_id=f"nodo_puerto_{mi_puerto}",
-                        data={"status": "alive"}
-                    )
+                    print("❌ No se pudo determinar nodo responsable")
+            
+            # ==================== SEND ====================
+            elif comando == "send" and len(cmd) >= 4:
+                ip_destino = cmd[1]
+                puerto_destino = int(cmd[2])
+                mensaje_texto = " ".join(cmd[3:])
                 
-                # ENVIAR usando Módulo 1 (Networking) ✅
-                print(f"\n📤 Enviando {mensaje.type.value} a {ip_destino}:{puerto_destino}...")
-                servidor.send_message(ip_destino, puerto_destino, mensaje.to_dict())
-                print("✅ Mensaje enviado!\n")
+                mensaje = {
+                    "type": "CUSTOM",
+                    "sender_id": chord.node_id[:8],
+                    "data": {"mensaje": mensaje_texto}
+                }
+                
+                print(f"📤 Enviando a {ip_destino}:{puerto_destino}:  {mensaje_texto}")
+                pepe.send_message(ip_destino, puerto_destino, mensaje)
             
-            elif comando == "test": 
-                # AUTO-TEST
-                print("\n🧪 Enviando mensaje de prueba a ti mismo...")
+            # ==================== HEARTBEAT ====================
+            elif comando == "heartbeat" and len(cmd) >= 3:
+                ip_destino = cmd[1]
+                puerto_destino = int(cmd[2])
+                
                 mensaje = Message(
-                    msg_type=MessageType. HEARTBEAT,
-                    sender_id=f"nodo_puerto_{mi_puerto}",
-                    data={"test": "auto-mensaje"}
+                    msg_type=MessageType.HEARTBEAT,
+                    sender_id=chord.node_id[:8],
+                    data={"status": "alive"}
                 )
-                servidor. send_message("127.0.0.1", mi_puerto, mensaje.to_dict())
-                time.sleep(1)
+                
+                print(f"💓 Enviando HEARTBEAT a {ip_destino}:{puerto_destino}")
+                pepe.send_message(ip_destino, puerto_destino, mensaje.to_dict())
             
+            # ==================== STORAGE ====================
+            elif comando == "storage": 
+                if local_storage:
+                    print(f"\n{'='*60}")
+                    print(f"ALMACENAMIENTO LOCAL ({len(local_storage)} claves)")
+                    print(f"{'='*60}")
+                    for k, v in local_storage.items():
+                        print(f"  {k} = {v}")
+                    print(f"{'='*60}\n")
+                else:
+                    print("\n⚠️ No hay datos almacenados localmente\n")
+            
+            # ==================== STATUS ====================
+            elif comando == "status":
+                info = chord.get_node_info()
+                print(f"\n{'='*60}")
+                print("ESTADO DEL NODO CHORD")
+                print(f"{'='*60}")
+                print(f"ID: {info['node_id'][:16]}...")
+                print(f"IP:Puerto:  {mi_ip}:{mi_puerto}")
+                print(f"Successor: {info['successor']}")
+                print(f"Predecessor: {info['predecessor']}")
+                print(f"En anillo: {info['is_joined']}")
+                print(f"Datos almacenados: {len(local_storage)}")
+                print(f"{'='*60}\n")
+            
+            # ==================== HELP ====================
+            elif comando == "help":
+                mostrar_menu()
+            
+            # ==================== QUIT ====================
             elif comando == "quit": 
+                print("\n👋 Cerrando nodo...")
                 break
             
             else:
-                print("❌ Comando no reconocido. Usa: enviar, test, quit")
+                print("❌ Comando no reconocido.  Usa 'help' para ver comandos")
     
-    except KeyboardInterrupt: 
-        print("\n\n👋 Ctrl+C detectado...")
+    except KeyboardInterrupt:
+        print("\n\nCtrl+C detectado...")
     
     finally:
-        servidor. stop()
-        print("✅ Nodo cerrado.  ¡Hasta luego!")
-
-
-
-
-
+        chord.leave_network()
+        pepe.stop()
+        print("\n✅ Nodo cerrado.  ¡Hasta luego!")
 
 if __name__ == "__main__":
     main()

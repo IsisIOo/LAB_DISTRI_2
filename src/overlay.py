@@ -36,9 +36,12 @@ class ChordNode:
     existing_node (ip, port) de un nodo existente para unirse al anillo
     salida: -
     """
-    def __init__(self, ip: str, port: int, existing_node: Tuple[str, int] = None):
+    # LÍNEA 39 - En __init__, AGREGAR este parámetro:
+    def __init__(self, ip: str, port: int, existing_node:  Tuple[str, int] = None, send_callback = None):
         self.ip = ip
         self.port = port
+        self.send_callback = send_callback  # ⭐ AGREGAR ESTA LÍNEA
+
         
         # 1. CALCULAR EL ID DEL NODO (Hash SHA-1 de ip:port)
         node_string = f"{ip}:{port}"
@@ -100,8 +103,14 @@ class ChordNode:
                 return start_int < key_int or key_int <= end_int
             else:
                 return start_int < key_int or key_int < end_int
+            
+    #Función para devolver el mensaje de que se envio sin problemas
+    def set_send_callback(self, callback):
+        """Configura la función para enviar mensajes"""
+        self.send_callback = callback
     
     # ==================== OPERACIONES BÁSICAS DEL ANILLO ====================
+    
     
     """join_network
     descripcion: Une este nodo al anillo Chord usando un nodo existente.
@@ -150,15 +159,29 @@ class ChordNode:
     descripcion: Encuentra el successor de una clave contactando un nodo remoto.
     entrada: key_id hash de la clave, target_ip IP del nodo remoto, target_port puerto del nodo remoto
     salida: (ip, port, node_id) del successor o None
-    """
+    """ 
     def _find_successor_remote(self, key_id: str, target_ip: str, target_port: int) -> Optional[Tuple[str, int, str]]:
-        # SIMULACIÓN: Por ahora devolvemos el mismo nodo
-        # EN LA VERSIÓN REAL, enviarías un mensaje FIND_SUCCESSOR
+        """Encuentra el successor contactando un nodo remoto (VERSIÓN REAL)"""
         logger.debug(f"Buscando successor para clave {key_id[:8]}... en {target_ip}:{target_port}")
         
-        # Esto es un mock - en la versión real usarías networking
-        return (target_ip, target_port, self._calculate_hash(f"{target_ip}:{target_port}"))
-    
+        if not self.send_callback:
+            logger.error("No hay callback configurado")
+            return (target_ip, target_port, self._calculate_hash(f"{target_ip}:{target_port}"))
+        
+        # Enviar mensaje CHORD
+        message = {
+            "type": "CHORD_FIND_SUCCESSOR",
+            "key_id": key_id,
+            "requester_id": self.node_id
+        }
+        
+        try:
+            self.send_callback(target_ip, target_port, message)
+            # Por ahora retornamos el nodo target (simplificación)
+            return (target_ip, target_port, self._calculate_hash(f"{target_ip}:{target_port}"))
+        except Exception as e:
+            logger.error(f"Error contactando {target_ip}:{target_port}: {e}")
+            return None
 
     """_notify_successor
     descripcion: Notifica al successor que podríamos ser su nuevo predecessor.
@@ -166,9 +189,23 @@ class ChordNode:
     salida: -
     """
     def _notify_successor(self, succ_ip: str, succ_port: int):
-        # SIMULACIÓN: En versión real enviarías mensaje UPDATE_PREDECESSOR
+        """Notifica al successor (VERSIÓN REAL)"""
         logger.debug(f"Notificando a {succ_ip}:{succ_port} como possible predecessor")
-    
+        
+        if not self.send_callback:
+            return
+        
+        message = {
+            "type": "CHORD_NOTIFY",
+            "node_id": self.node_id,
+            "ip": self.ip,
+            "port":  self.port
+        }
+        
+        try: 
+            self.send_callback(succ_ip, succ_port, message)
+        except Exception as e:
+            logger.error(f"Error notificando a {succ_ip}:{succ_port}: {e}")
 
     """find_successor
     descripcion: Encuentra el nodo responsable de una clave en el anillo.   
@@ -367,14 +404,22 @@ class ChordNode:
     
     # ==================== MANEJO DE MENSAJES ====================
     
-    """handle_message
-    descripcion: Procesa mensajes entrantes para el overlay.
-    entrada: message Diccionario con el mensaje recibido
-    salida: Diccionario con la respuesta o None"""
     def handle_message(self, message: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        """
+        Procesa mensajes entrantes para el overlay.
+        entrada: message Diccionario con el mensaje recibido
+        salida:  Diccionario con la respuesta o None
+        """
         msg_type = message.get("type")
         
+        # ⭐ AGREGAR LOS NOMBRES CORRECTOS (con prefijo CHORD_)
         handlers = {
+            "CHORD_JOIN_REQUEST": self._handle_join_request,
+            "CHORD_FIND_SUCCESSOR": self._handle_find_successor,
+            "CHORD_NOTIFY": self._handle_notify,  # ⭐ AGREGAR ESTE
+            "CHORD_UPDATE_PREDECESSOR": self._handle_update_predecessor,
+            "CHORD_HEARTBEAT": self._handle_heartbeat,
+            # También mantener los nombres sin prefijo por compatibilidad
             "JOIN_REQUEST": self._handle_join_request,
             "FIND_SUCCESSOR": self._handle_find_successor,
             "UPDATE_PREDECESSOR": self._handle_update_predecessor,
@@ -456,6 +501,37 @@ class ChordNode:
             "timestamp": time.time()
         }
 
+    def _handle_notify(self, message: Dict) -> Optional[Dict]:
+        """
+        _handle_notify
+        descripcion: Maneja notificación de posible nuevo predecessor
+        entrada: message Diccionario con el mensaje CHORD_NOTIFY
+        salida: None (no requiere respuesta)
+        """
+        new_pred_id = message.get("node_id")
+        new_pred_ip = message.get("ip")
+        new_pred_port = message.get("port")
+        
+        logger.info(f"📢 NOTIFY recibido de {new_pred_id[: 8]}...  ({new_pred_ip}:{new_pred_port})")
+        
+        # Actualizar predecessor si: 
+        # 1. No tenemos predecessor, O
+        # 2. El nuevo nodo está más cerca de nosotros que el predecessor actual
+        
+        if not self.predecessor:
+            # No tenemos predecessor, aceptar este
+            self.predecessor = (new_pred_ip, new_pred_port, new_pred_id)
+            logger.info(f"✅ Predecessor establecido: {new_pred_id[:8]}...")
+            return None
+        
+        # Verificar si el nuevo nodo está entre el predecessor actual y nosotros
+        if self._is_between(new_pred_id, self.predecessor[2], self.node_id, inclusive=False):
+            self.predecessor = (new_pred_ip, new_pred_port, new_pred_id)
+            logger.info(f"✅ Predecessor actualizado: {new_pred_id[:8]}...")
+        else:
+            logger.debug(f"Ignorando NOTIFY de {new_pred_id[:8]}...  (no es mejor predecessor)")
+        
+        return None  # NOTIFY no requiere respuesta
 
 # ==================== FUNCIONES DE UTILIDAD ====================
 
