@@ -26,11 +26,16 @@ def handle_incoming_message(msg: dict, addr: tuple):
         return
     
     # STORAGE (PUT/GET/REPLICATE) - ROUTING SILENCIOSO
-    elif msg_type in ["PUT", "GET", "REPLICATE", "RESULT"]:
-        if msg_type == "RESULT":
-            storage._handle_result(msg)  # ← GET respuesta
-        else:
-            handle_storage_distributed(msg, addr)
+    if msg_type in ["PUT", "GET", "REPLICATE", "RESULT"]:
+        response = storage.handle_storage_message(msg)
+        if response:
+            # ⭐ CRÍTICO: Enviar respuesta al ORIGEN (NO al addr)
+            sender_ip = msg.get("sender_ip")
+            sender_port = msg.get("sender_port")
+            if sender_ip and sender_port:
+                pepe.send_message(sender_ip, sender_port, response)
+            else:
+                pepe.send_message(addr[0], addr[1], response)
         return
     
     # JOIN aplicación
