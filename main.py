@@ -198,7 +198,9 @@ def main():
     else:
         print("\n✅ Este es el primer nodo del anillo Chord")
         chord.is_joined = True
-        chord.successor = (mi_ip, mi_puerto, chord.node_id)
+        chord.successor = None
+        print("Successor: None (primer nodo del anillo)")
+        print("Predecessor: None (anillo de 1 nodo)")
     
     # Mostrar estado inicial
     print(f"\n{'='*60}")

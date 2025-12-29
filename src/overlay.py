@@ -1,5 +1,4 @@
-#MODULO 3: OVERLAY - CHORD
-#Anillo hash
+#MODULO 3: OVERLAY - CHORD / Anillo hash
 import hashlib
 import json
 import socket
@@ -266,9 +265,6 @@ class ChordNode:
     def find_successor(self, key_id: str) -> Optional[Tuple[str, int, str]]:
         # Si aún no está unido, permitir fallback si ya se auto-referenció como successor
         if not self.is_joined:
-            if self.successor and self.successor[2] == self.node_id:
-                logger.debug("Nodo no unido, usando self como successor provisional")
-                return self.successor
             logger.warning("Nodo no unido al anillo")
             return None
         
@@ -339,7 +335,7 @@ class ChordNode:
             try:
                 if not self.successor: 
                     logger.debug("No hay successor para estabilizar")
-                    time.sleep(10)
+                    time.sleep(1)
                     continue
                 
                 succ_ip, succ_port, succ_id = self.successor
@@ -351,12 +347,12 @@ class ChordNode:
                         # Hay otro nodo:  hacerlo mi successor
                         logger.info(f"Stabilize: Cambiando successor de mí mismo a {self.predecessor[2][:8]}...")
                         self.successor = self.predecessor
-                        time.sleep(10)
+                        time.sleep(1)
                         continue
                     else:
                         #Caso en el que no haya nadie más
                         logger.debug("Stabilize: Anillo de 1 nodo")
-                        time.sleep(10)
+                        time.sleep(1)
                         continue
                 
                 # Preguntar al successor: "¿Quién es tu predecessor?"
@@ -364,7 +360,7 @@ class ChordNode:
                 
                 if not self.send_callback: 
                     logger.warning("No hay send_callback configurado")
-                    time.sleep(10)
+                    time.sleep(1)
                     continue
                 
                 # Envia el mensaje a "GET_PREDECESSOR"
@@ -423,7 +419,7 @@ class ChordNode:
             except Exception as e: 
                 logger.error(f"Error en stabilize loop: {e}")
             
-            time.sleep(10)
+            time.sleep(1)
 
     """_ask_predecessor_of_successor
     descripcion: Pregunta al successor quién es su predecessor.
@@ -480,7 +476,12 @@ class ChordNode:
             return
         
         succ_ip, succ_port, succ_id = self.successor
-        
+
+        if succ_id == self.node_id:
+            logger.error("ERROR: Successor es self. Corrigiendo a None")
+            self.successor = None
+            return 
+    
         logger.debug(f"Ejecutando stabilize con successor: {succ_id[:8]}...")
         
         try:
@@ -595,11 +596,11 @@ class ChordNode:
                         # error enviando heartbeat
                         logger.warning(f"No se pudo enviar heartbeat a {pred_ip}:{pred_port}")
                 
-                time.sleep(15)
+                time.sleep(2)
                 
             except Exception as e:
                 logger.error(f"Error en _check_predecessor_loop: {e}")
-                time.sleep(15)  # esperar antes de reintentar  
+                time.sleep(2)  # esperar antes de reintentar  
 
 
 
@@ -757,17 +758,8 @@ class ChordNode:
         # caso de anillo vacío o sin successor
         if not succ:
             logger.info("Anillo vacío o sin successor; usando este nodo como bootstrap")
-            # asignar a sí mismo como successor si no tiene uno
             if not self.successor:
-                self.successor = (self.ip, self.port, self.node_id)
-            # marcar como unido al anillo
-            if not self.is_joined:
-                self.is_joined = True
-            # actualizar finger table
-            try:
-                self._update_finger_table()
-            except Exception as e:
-                logger.error(f"Error actualizando finger table tras bootstrap: {e}")
+                logger.info("Anillo vacío")
             succ = self.successor
         
         response = {
@@ -812,9 +804,10 @@ class ChordNode:
         new_pred_ip = message.get("new_predecessor_ip") or message.get("ip") #ip del nuevo predecessor
         new_pred_port = message.get("new_predecessor_port") or message.get("port") #puerto del nuevo predecessor
 
-        if not new_pred_id:
-            logger.warning("UPDATE_PREDECESSOR sin datos suficientes")
-            return {"type": "ACK"}
+        if new_pred_id == self.node_id:
+            logger.error("UPDATE_PREDECESSOR rechazado: no puedo ser mi propio predecessor")
+            self.predecessor = None
+            return {"type": "ACK", "error": "predecessor_cannot_be_self"}
 
         # validación ligera: si existe predecessor, comprobar intervalo (solo log)
         if self.predecessor and not self._is_between(new_pred_id, self.predecessor[2], self.node_id, inclusive=True):
@@ -837,10 +830,10 @@ class ChordNode:
         new_succ_ip = message.get("new_successor_ip") or message.get("ip") #ip del nuevo successor
         new_succ_port = message.get("new_successor_port") or message.get("port") #puerto del nuevo successor
 
-        if not new_succ_id: 
-            # si no hay id, no se puede actualizar
-            logger.warning("UPDATE_SUCCESSOR sin datos suficientes")
-            return {"type": "ACK"}
+        if new_succ_id == self.node_id:
+            logger.error("UPDATE_SUCCESSOR rechazado: no puedo ser mi propio successor")
+            self.successor = None
+            return {"type": "ACK", "error": "successor_cannot_be_self"}
 
         # validación ligera: si existe successor, comprobar intervalo (solo log)
         if self.successor and not self._is_between(new_succ_id, self.node_id, self.successor[2], inclusive=True):
@@ -909,7 +902,7 @@ class ChordNode:
             logger.warning("NOTIFY con datos incompletos")
             return None
         
-        logger.info(f"📢 NOTIFY recibido de {new_node_id[: 8]}... ({new_ip}:{new_port})")
+        logger.info(f"NOTIFY recibido de {new_node_id[: 8]}... ({new_ip}:{new_port})")
         
         # Caso 1: No hay predecessor
         if not self.predecessor:
