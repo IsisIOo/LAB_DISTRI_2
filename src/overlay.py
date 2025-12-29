@@ -335,15 +335,95 @@ class ChordNode:
     entrada: -
     salida: -"""
     def _stabilize_loop(self):
-        #verificamos si el nodo sigue corriendo y está unido al anillo
         while self.running and self.is_joined:
             try:
-                self._stabilize()
-            except Exception as e:
-                logger.error(f"Error en stabilize: {e}")
+                if not self.successor: 
+                    logger.debug("No hay successor para estabilizar")
+                    time.sleep(10)
+                    continue
+                
+                succ_ip, succ_port, succ_id = self.successor
+                
+                # Caso especial: si mi successor soy yo mismo.
+                if succ_id == self.node_id:
+                    # Busca si hay otro nodo
+                    if self.predecessor and self.predecessor[2] != self.node_id:
+                        # Hay otro nodo:  hacerlo mi successor
+                        logger.info(f"Stabilize: Cambiando successor de mí mismo a {self.predecessor[2][:8]}...")
+                        self.successor = self.predecessor
+                        time.sleep(10)
+                        continue
+                    else:
+                        #Caso en el que no haya nadie más
+                        logger.debug("Stabilize: Anillo de 1 nodo")
+                        time.sleep(10)
+                        continue
+                
+                # Preguntar al successor: "¿Quién es tu predecessor?"
+                logger.debug(f"Stabilize: Preguntando predecessor a {succ_id[:8]}...")
+                
+                if not self.send_callback: 
+                    logger.warning("No hay send_callback configurado")
+                    time.sleep(10)
+                    continue
+                
+                # Envia el mensaje a "GET_PREDECESSOR"
+                message = {
+                    "type": "CHORD_GET_PREDECESSOR",
+                    "requester_id": self.node_id,
+                    "requester_ip": self.ip,
+                    "requester_port": self.port,
+                    "timestamp": time.time()
+                }
+                
+                try:
+                    # Usar request_response para obtener respuesta
+                    response = self._send_and_wait(succ_ip, succ_port, message, timeout=5.0)
+                    
+                    if response:
+
+                        #Obtiene la información necesaria.
+                        pred_ip = response.get("predecessor_ip")
+                        pred_port = response.get("predecessor_port")
+                        pred_id = response.get("predecessor_id")
+                        
+                        if pred_ip and pred_port and pred_id:
+
+                            # Verificar si ese predecessor está entre yo y mi successor
+                            if self._is_between(pred_id, self.node_id, succ_id, inclusive=False):
+                                # Ese nodo debería ser mi successor
+                                old_succ = self.successor
+                                self.successor = (pred_ip, pred_port, pred_id)
+                                logger. info(f"Successor actualizado por stabilize correctamente: {old_succ[2][:8]}...  → {pred_id[:8]}...")
+                            else:
+                                logger.debug(f"Stabilize:  Predecessor {pred_id[:8]}... no está entre yo y successor")
+                        else:
+                            # El successor no tiene predecessor (o es None)
+                            logger.debug("Stabilize: Successor no tiene predecessor")
+                    
+                except Exception as e:
+                    logger.debug(f"Stabilize: Error preguntando a successor: {e}")
+                
+                # Notificar al successor que existo (podría ser su nuevo predecessor)
+                notify_msg = {
+                    "type": "CHORD_NOTIFY",
+                    "node_id": self.node_id,
+                    "ip":  self.ip,
+                    "port": self.port,
+                    "timestamp": time.time(),
+                    "current_predecessor": self.predecessor[2] if self.predecessor else None
+                }
+                
+                try:
+                    self. send_callback(succ_ip, succ_port, notify_msg)
+                    logger.debug(f"Stabilize:  NOTIFY enviado a {succ_id[:8]}...")
+                except Exception as e:
+                    logger. warning(f"Stabilize: Error enviando NOTIFY: {e}")
+            
+            except Exception as e: 
+                logger.error(f"Error en stabilize loop: {e}")
             
             time.sleep(10)
-    
 
     """_ask_predecessor_of_successor
     descripcion: Pregunta al successor quién es su predecessor.
@@ -817,25 +897,41 @@ class ChordNode:
     entrada: message Diccionario con el mensaje CHORD_NOTIFY
     salida: None (no requiere respuesta)
     """
-    def _handle_notify(self, message: Dict) -> Optional[Dict]:
-        new_pred_id = message.get("node_id") #id del posible nuevo predecessor
-        new_pred_ip = message.get("ip") #ip del posible nuevo predecessor
-        new_pred_port = message.get("port") #puerto del posible nuevo predecessor
-        
-        logger.info(f"recibido de {new_pred_id[: 8]}...  ({new_pred_ip}:{new_pred_port})")
+    def _handle_notify(self, message:  Dict) -> Optional[Dict]:
 
-        # Si no hay predecessor actual, aceptar este        
-        if not self.predecessor:
-            self.predecessor = (new_pred_ip, new_pred_port, new_pred_id)
-            logger.info(f"Predecessor establecido: {new_pred_id[:8]}...")
+        #Obtenemos información necesaria
+        new_node_id = message.get("node_id")
+        new_ip = message.get("ip")
+        new_port = message.get("port")
+        
+        #En caso de que hayan errores
+        if not new_node_id or not new_ip or not new_port:
+            logger.warning("NOTIFY con datos incompletos")
             return None
         
-        # verificar si el nuevo nodo está entre el predecessor actual y nosotros
-        if self._is_between(new_pred_id, self.predecessor[2], self.node_id, inclusive=False):
-            self.predecessor = (new_pred_ip, new_pred_port, new_pred_id)
-            logger.info(f"Predecesor actualizado: {new_pred_id[:8]}...")
+        logger.info(f"📢 NOTIFY recibido de {new_node_id[: 8]}... ({new_ip}:{new_port})")
+        
+        # Caso 1: No hay predecessor
+        if not self.predecessor:
+            self.predecessor = (new_ip, new_port, new_node_id)
+            logger.info(f"Predecessor establecido: {new_node_id[:8]}...")
+            return None
+        
+        # Caso 2: El nodo que notifica es el mismo que mi predecessor actual
+        if new_node_id == self.predecessor[2]:
+
+            # Actualizar por si cambió IP/puerto (Es raro de que pase, pero por si acaso)
+            self.predecessor = (new_ip, new_port, new_node_id)
+            logger.debug(f"Predecessor confirmado: {new_node_id[:8]}...")
+            return None
+        
+        # Caso 3: Verificar si el nuevo nodo está entre mi predecessor y yo
+        if self._is_between(new_node_id, self. predecessor[2], self.node_id, inclusive=False):
+            old_pred = self.predecessor
+            self. predecessor = (new_ip, new_port, new_node_id)
+            logger.info(f"Predecessor actualizado: {old_pred[2][:8]}... → {new_node_id[:8]}...")
         else:
-            logger.debug(f"Ignorando NOTIFY de {new_pred_id[:8]}...  (no es mejor predecessor)")
+            logger.debug(f"NOTIFY ignorado: {new_node_id[:8]}... no está entre predecessor y yo")
         
         return None 
 
