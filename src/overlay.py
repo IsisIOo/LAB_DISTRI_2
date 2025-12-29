@@ -282,12 +282,18 @@ class ChordNode:
         closest = self._closest_preceding_node(key_id)
         
         if closest:
-            logger.debug(f"Reenviando búsqueda a {closest[2][:8]}...")
-            return self._find_successor_remote(key_id, closest[0], closest[1])
-        
-        # si no encontramos nada, retornamos el successor del nodo actual
-        logger.warning(f"No se encontró nodo cercano para {key_id[:8]}..., usando successor")
-        return self.successor
+            # Intentar buscar remotamente
+            result = self._find_successor_remote(key_id, closest[0], closest[1])
+            if result:
+                return result
+                
+        # === CORRECCIÓN ===
+        # Si la búsqueda remota falla o no hay fingers, usar el sucesor actual
+        if self.successor:
+            return self.successor
+                    
+        # Fallback final: Si no conozco a nadie, soy yo mismo
+        return (self.ip, self.port, self.node_id)
     
 
     """_closest_preceding_node 
@@ -333,10 +339,26 @@ class ChordNode:
     def _stabilize_loop(self):
         while self.running and self.is_joined:
             try:
+                # === CORRECCIÓN: AUTO-CURACIÓN ===
                 if not self.successor: 
-                    logger.debug("No hay successor para estabilizar")
-                    time.sleep(1)
-                    continue
+                    logger.warning("No hay successor. Intentando recuperar conexión...")
+                            
+                # Intento 1: Usar el predecesor si existe (vuelta atrás)
+                    if self.predecessor:
+                        logger.info(f"Recuperando usando predecesor {self.predecessor[2][:8]}...")
+                        self.successor = self.predecessor
+                            
+                # Intento 2: Usar algún vecino conocido de la lista
+                    elif self.neighbors:
+                         # Tomamos el primero que encontremos
+                        nid, (nip, nport) = next(iter(self.neighbors.items()))
+                        logger.info(f"Recuperando usando vecino conocido {nid[:8]}...")
+                        self.successor = (nip, nport, nid)
+                            
+                    else:
+                        # No hay nada que hacer, esperar
+                        time.sleep(1)
+                        continue
                 
                 succ_ip, succ_port, succ_id = self.successor
                 
@@ -380,14 +402,12 @@ class ChordNode:
                         except Exception as e:
                             logger.warning(f"Fallo comunicación en stabilize: {e}")
                     if response:
-
                         #Obtiene la información necesaria.
                         pred_ip = response.get("predecessor_ip")
                         pred_port = response.get("predecessor_port")
                         pred_id = response.get("predecessor_id")
                         
                         if pred_ip and pred_port and pred_id:
-
                             # Verificar si ese predecessor está entre yo y mi successor
                             if self._is_between(pred_id, self.node_id, succ_id, inclusive=False):
                                 # Ese nodo debería ser mi successor
@@ -410,15 +430,13 @@ class ChordNode:
                     "ip":  self.ip,
                     "port": self.port,
                     "timestamp": time.time(),
-                    "current_predecessor": self.predecessor[2] if self.predecessor else None
                 }
                 
                 try:
                     self. send_callback(succ_ip, succ_port, notify_msg)
                     logger.debug(f"Stabilize:  NOTIFY enviado a {succ_id[:8]}...")
-                except Exception as e:
-                    logger. warning(f"Stabilize: Error enviando NOTIFY: {e}")
-            
+                except Exception:
+                    pass
             except Exception as e: 
                 logger.error(f"Error en stabilize loop: {e}")
             
@@ -748,9 +766,7 @@ class ChordNode:
         new_ip = message.get("ip") #ip del nuevo nodo
         new_port = message.get("port") #puerto del nuevo nodo
         
-        
         logger.info(f"Procesando JOIN_REQUEST de {new_node_id[:8]}... ({new_ip}:{new_port})")
-        
         
         # recordar vecino
         self._remember_node(new_node_id, new_ip, new_port)
@@ -760,10 +776,11 @@ class ChordNode:
 
         # caso de anillo vacío o sin successor
         if not succ:
-            logger.info("Anillo vacío o sin successor; usando este nodo como bootstrap")
-            if not self.successor:
-                logger.info("Anillo vacío")
-            succ = self.successor
+            if self.successor:
+                succ = self.successor
+            else:
+            # Fallback final: Yo soy el sucesor temporal para que entre al anillo
+                succ = (self.ip, self.port, self.node_id)
         
         response = {
             "type": "JOIN_RESPONSE",
