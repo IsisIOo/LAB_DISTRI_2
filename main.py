@@ -198,9 +198,11 @@ def main():
     else:
         print("\n✅ Este es el primer nodo del anillo Chord")
         chord.is_joined = True
-        chord.successor = None
+        chord.successor = (chord.ip, chord.port, chord.node_id)
         print("Successor: None (primer nodo del anillo)")
         print("Predecessor: None (anillo de 1 nodo)")
+        # Iniciar hilos de mantenimiento para que el anillo se estabilice dinámicamente
+        chord.start_maintenance()
     
     # Mostrar estado inicial
     print(f"\n{'='*60}")

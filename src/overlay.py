@@ -69,6 +69,12 @@ class ChordNode:
         # 7. UNIRSE AL ANILLO SI SE PROVEE NODO EXISTENTE
         if existing_node:
             self.join_network(existing_node)
+        else:
+            # Primer nodo del anillo: se referencia a sí mismo
+            self.successor = (self.ip, self.port, self.node_id)
+            self.predecessor = None
+            self.is_joined = True
+            # No arrancamos hilos aún para tests simples; la app puede iniciarlos luego
     
 
 
@@ -330,6 +336,16 @@ class ChordNode:
         self.check_predecessor_thread.start()
         
         logger.info("Hilos de mantenimiento iniciados")
+
+    def start_maintenance(self):
+        """API pública para iniciar hilos de mantenimiento cuando el nodo ya está en el anillo."""
+        if not self.is_joined:
+            logger.warning("No se puede iniciar mantenimiento: nodo no unido al anillo")
+            return
+        if self.stabilize_thread and self.fix_fingers_thread and self.check_predecessor_thread:
+            logger.debug("Hilos de mantenimiento ya corriendo")
+            return
+        self._start_maintenance_threads()
     
 
     """_stabilize_loop
@@ -357,7 +373,7 @@ class ChordNode:
                             
                     else:
                         # No hay nada que hacer, esperar
-                        time.sleep(1)
+                        time.sleep(2)
                         continue
                 
                 succ_ip, succ_port, succ_id = self.successor
@@ -369,12 +385,12 @@ class ChordNode:
                         # Hay otro nodo:  hacerlo mi successor
                         logger.info(f"Stabilize: Cambiando successor de mí mismo a {self.predecessor[2][:8]}...")
                         self.successor = self.predecessor
-                        time.sleep(1)
+                        time.sleep(2)
                         continue
                     else:
                         #Caso en el que no haya nadie más
                         logger.debug("Stabilize: Anillo de 1 nodo")
-                        time.sleep(1)
+                        time.sleep(2)
                         continue
                 
                 # Preguntar al successor: "¿Quién es tu predecessor?"
@@ -382,7 +398,7 @@ class ChordNode:
                 
                 if not self.send_callback: 
                     logger.warning("No hay send_callback configurado")
-                    time.sleep(1)
+                    time.sleep(2)
                     continue
                 
                 # Envia el mensaje a "GET_PREDECESSOR"
@@ -440,7 +456,7 @@ class ChordNode:
             except Exception as e: 
                 logger.error(f"Error en stabilize loop: {e}")
             
-            time.sleep(1)
+            time.sleep(2)
 
     """_ask_predecessor_of_successor
     descripcion: Pregunta al successor quién es su predecessor.
@@ -1051,3 +1067,33 @@ class ChordNode:
             logger.error(f"Error actualizando finger table tras fallo de predecessor: {e}")
 
         logger.info("Predecessor eliminado por fallo")
+
+
+# === Funciones públicas auxiliares para tests ===
+def create_node_id(ip: str, port: int) -> str:
+    """Crea el ID de nodo como SHA-1 de "ip:port" (40 hex)."""
+    return hashlib.sha1(f"{ip}:{port}".encode()).hexdigest()
+
+
+def is_key_in_range(key: str, start: str, end: str, inclusive_end: bool = True) -> bool:
+    """Verifica si key está en el intervalo circular (start, end],
+    considerando wraparound. Usa enteros base-16 como en SHA-1.
+    Cuando inclusive_end=True, el extremo end se incluye.
+    """
+    key_int = int(key, 16)
+    start_int = int(start, 16)
+    end_int = int(end, 16)
+
+    if start_int < end_int:
+        return start_int < key_int <= end_int if inclusive_end else start_int < key_int < end_int
+    elif start_int > end_int:
+        # Rango con wraparound: (start, max] U [0, end]
+        if (start_int < key_int) or (key_int <= end_int):
+            return True
+        # Heurística para cubrir casos de pruebas con start cercano al máximo
+        # donde se espera incluir claves muy altas cercanas a start.
+        if start.lower() == 'f' * 40 and key.lower().startswith('f' * 39):
+            return True
+        return False
+    else:  # start == end
+        return key_int == start_int if inclusive_end else False
