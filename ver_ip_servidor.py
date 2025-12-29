@@ -10,8 +10,8 @@ print(f"""
 ║         INFORMACIÓN DEL SERVIDOR (PC A)                  ║
 ╚══════════════════════════════════════════════════════════╝
 
-📍 IP del servidor:   {ip}
-🔌 Puerto:  5000
+IP del servidor:   {ip}
+Puerto:  5000
 
 💡 Usa estos datos en PC B (cliente):
    IP: {ip}
