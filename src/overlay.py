@@ -39,6 +39,8 @@ class ChordNode:
         self.port = port
         self.send_callback = send_callback  
         self.request_callback = None
+        # Mapa de vecinos conocidos por node_id → (ip, port)
+        self.neighbors: Dict[str, Tuple[str, int]] = {}
 
         
         # 1. CALCULAR EL ID DEL NODO (Hash SHA-1 de ip:port)
@@ -73,13 +75,11 @@ class ChordNode:
 
     
     #  FUNCIONES HASH 
-    """
-    _calculate_hash
+    """_calculate_hash
     descripcion: calcula el hash SHA-1 de una cadena. Convierte el string a bytes, hashlib calcula el SHA-1 y hexdigest convierte el resultado
     hexadecimal.
     entrada: key cadena que se debe hashear
-    salida: string de hash hexadecimal de 40 caracteres
-    """
+    salida: string de hash hexadecimal de 40 caracteres """
     def _calculate_hash(self, key: str) -> str:
         return hashlib.sha1(key.encode()).hexdigest()
     
@@ -119,9 +119,26 @@ class ChordNode:
     def set_send_callback(self, callback):
         self.send_callback = callback
     
+
+    """set_request_callback
+    descripcion: Configura la función callback para request/response síncrono.
+    entrada: callback función que maneja request/response (ip, port, message) -> response dict
+    salida: -"""
     def set_request_callback(self, callback):
         """Configura un callback síncrono (ip, port, message) -> respuesta dict."""
         self.request_callback = callback
+
+    """_remember_node
+    descripcion: Guarda en el mapa de vecinos si hay datos suficientes.
+    entrada: node_id ID del nodo, ip Dirección IP del nodo, port Puerto del nodo
+    salida: -"""
+    def _remember_node(self, node_id: Optional[str], ip: Optional[str], port: Optional[int]):
+        """Guarda en el mapa de vecinos si hay datos suficientes."""
+        try:
+            if node_id and ip and port is not None:
+                self.neighbors[node_id] = (ip, int(port))
+        except Exception:
+            pass
     
 
     #  OPERACIONES DEL ANILLO 
@@ -143,6 +160,7 @@ class ChordNode:
                 # asigna al sucesor
                 succ_ip, succ_port, succ_id = successor
                 self.successor = (succ_ip, succ_port, succ_id)
+                self._remember_node(succ_id, succ_ip, succ_port)
                 
                 # notificar al sucesor que somos su posible (puede ser momentaneo) predecesor
                 self._notify_successor(succ_ip, succ_port)
@@ -193,6 +211,7 @@ class ChordNode:
                     port = response.get("successor_port")
                     node_id = response.get("successor_id")
                     if ip and port and node_id:
+                        self._remember_node(node_id, ip, port)
                         return (ip, port, node_id)
                 # en caso de que la respuesta no es válida
                 logger.warning("Respuesta inválida o incompleta al buscar successor remoto")
@@ -245,8 +264,11 @@ class ChordNode:
     entrada: key_id hash de la clave a buscar
     salida: (ip, port, node_id) del nodo responsable, o None"""
     def find_successor(self, key_id: str) -> Optional[Tuple[str, int, str]]:
-        #comprobamos si el nodo está unido al anillo
+        # Si aún no está unido, permitir fallback si ya se auto-referenció como successor
         if not self.is_joined:
+            if self.successor and self.successor[2] == self.node_id:
+                logger.debug("Nodo no unido, usando self como successor provisional")
+                return self.successor
             logger.warning("Nodo no unido al anillo")
             return None
         
@@ -433,17 +455,20 @@ class ChordNode:
     def _update_finger_table(self):
         self.finger_table = []
         m = 160  # bits de SHA-1
-        
-        for i in range(1, m + 1):  # 160 entradas
-            # calcular: (n + 2^(i-1)) mod 2^m, formula de saltso
-            offset = pow(2, i - 1)
-            target_id = (int(self.node_id, 16) + offset) % pow(2, 160)
-            target_id_hex = format(target_id, '040x')  # 40 chars hex
-            
-            # Buscar sucesor de ese target
-            succ = self.find_successor(target_id_hex)
-            if succ:
-                self.finger_table.append(succ)
+        k = 16   # reducir tamaño para laboratorio
+        for i in range(1, k + 1):
+            try:
+                offset = pow(2, i - 1)
+                target_id = (int(self.node_id, 16) + offset) % pow(2, m)
+                target_id_hex = format(target_id, '040x')
+                succ = self.find_successor(target_id_hex)
+                if succ:
+                    # evitar duplicados consecutivos
+                    if not self.finger_table or self.finger_table[-1][2] != succ[2]:
+                        self.finger_table.append(succ)
+                        self._remember_node(succ[2], succ[0], succ[1])
+            except Exception as e:
+                logger.debug(f"Error parcial actualizando finger[{i}]: {e}")
     
 
 
@@ -495,6 +520,9 @@ class ChordNode:
             except Exception as e:
                 logger.error(f"Error en _check_predecessor_loop: {e}")
                 time.sleep(15)  # esperar antes de reintentar  
+
+
+
 
     #  API PÚBLICA 
     
@@ -594,7 +622,9 @@ class ChordNode:
     
 
 
+
     # FUNCIONES DE MANEJO DE MENSAJES
+    
     """Procesa mensajes entrantes para el overlay.
         entrada: message Diccionario con el mensaje recibido
         salida:  Diccionario con la respuesta o None"""
@@ -638,6 +668,9 @@ class ChordNode:
         logger.info(f"Procesando JOIN_REQUEST de {new_node_id[:8]}... ({new_ip}:{new_port})")
         
         
+        # recordar vecino
+        self._remember_node(new_node_id, new_ip, new_port)
+
         # encontrar successor para el nuevo nodo
         succ = self.find_successor(new_node_id)
 
@@ -675,6 +708,8 @@ class ChordNode:
     def _handle_find_successor(self, message: Dict) -> Dict:
         key_id = message.get("key_id") #id de la clave a buscar
         succ = self.find_successor(key_id) #buscar el successor de la clave
+        if succ:
+            self._remember_node(succ[2], succ[0], succ[1])
         
         response = {
             "type": "SUCCESSOR_RESPONSE",
@@ -701,13 +736,18 @@ class ChordNode:
             logger.warning("UPDATE_PREDECESSOR sin datos suficientes")
             return {"type": "ACK"}
 
+        # validación ligera: si existe predecessor, comprobar intervalo (solo log)
+        if self.predecessor and not self._is_between(new_pred_id, self.predecessor[2], self.node_id, inclusive=True):
+            logger.debug("UPDATE_PREDECESSOR fuera de intervalo esperado; aplicando de todas formas")
+
         # actualizar predecessor
         self.predecessor = (new_pred_ip, int(new_pred_port) if new_pred_port is not None else None, new_pred_id)
+        self._remember_node(new_pred_id, new_pred_ip, new_pred_port)
         logger.info(f"Predecessor actualizado: {new_pred_id[:8]}...")
         return {"type": "ACK"}
 
-    """
-    _handle_update_successor
+
+    """_handle_update_successor
     descripcion: Actualiza el successor a partir de un mensaje.
     entrada: message con campos new_successor_* o (node_id, ip, port)
     salida: Diccionario con ACK
@@ -722,8 +762,13 @@ class ChordNode:
             logger.warning("UPDATE_SUCCESSOR sin datos suficientes")
             return {"type": "ACK"}
 
+        # validación ligera: si existe successor, comprobar intervalo (solo log)
+        if self.successor and not self._is_between(new_succ_id, self.node_id, self.successor[2], inclusive=True):
+            logger.debug("UPDATE_SUCCESSOR fuera de intervalo esperado; aplicando de todas formas")
+
         # actualizar successor
         self.successor = (new_succ_ip, int(new_succ_port) if new_succ_port is not None else None, new_succ_id)
+        self._remember_node(new_succ_id, new_succ_ip, new_succ_port)
         logger.info(f"Successor actualizado: {new_succ_id[:8]}...")
         # actualizar finger table
         try:
@@ -744,8 +789,8 @@ class ChordNode:
             "timestamp": time.time()
         }
 
-    """
-    _handle_get_predecessor
+
+    """_handle_get_predecessor
     descripcion: Responde con el predecessor actual de este nodo.
     entrada: message Diccionario con el mensaje CHORD_GET_PREDECESSOR
     salida: Diccionario con la respuesta PREDECESSOR_RESPONSE
@@ -767,8 +812,7 @@ class ChordNode:
         }
 
 
-    """
-    _handle_notify
+    """_handle_notify
     descripcion: Maneja notificación de posible nuevo predecessor
     entrada: message Diccionario con el mensaje CHORD_NOTIFY
     salida: None (no requiere respuesta)
@@ -845,6 +889,8 @@ class ChordNode:
                 ip, port = self.predecessor[0], self.predecessor[1] #puerto del predecessor
             elif self.successor and self.successor[2] == target_id: #si es el successor
                 ip, port = self.successor[0], self.successor[1] #puerto del successor
+            elif target_id in self.neighbors:
+                ip, port = self.neighbors[target_id]
             else:
                 # sin datos del destino, no podemos pedir ACK contra ID.
                 logger.debug("No se pudo resolver IP/puerto para heartbeat ACK")
