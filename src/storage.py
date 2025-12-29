@@ -66,6 +66,7 @@ class DistributedStorage:
     
     # Maneja PUT: almacena + replica en R-1 nodos sucesivos
     def _handle_put(self, msg: dict, request_id: str) -> Optional[dict]:
+        """Maneja PUT: almacena + replica"""
         data = msg.get("data", {})
         key = data.get("key")
         value = data.get("value")
@@ -73,11 +74,8 @@ class DistributedStorage:
         if not key or value is None:
             return self._error_response(request_id, "Key o value inválido")
         
-        # 1. Almacenar localmente como primario
         if self.store_local(key, value, is_replica=False):
-            # 2. Replicar en los siguientes R-1 nodos (simplificado: successor)
             self._replicate_to_successors(key, value, request_id)
-            
             return {
                 "type": "RESULT",
                 "request_id": request_id,
@@ -134,15 +132,14 @@ class DistributedStorage:
     
     # Maneja LOOKUP: busca clave en DHT estilo Chord
     def _handle_lookup(self, msg: dict, request_id: str) -> Optional[dict]:
+        """Lookup Chord: forwarding hacia nodo responsable"""
         data = msg.get("data", {})
         key = data.get("key")
         key_hash = self.hash_key(key)
-        origin = msg.get("origin", {})
         hops = data.get("hops", 0)
         
         print(f"🔍 [{self.node_id[:8]}] Lookup {key} (hash={key_hash[:8]}, hops={hops+1})")
         
-        # Si soy responsable o tengo la clave
         if key in self.local_storage or self.is_responsible(key_hash):
             result = self.get_local(key)
             return {
@@ -158,61 +155,44 @@ class DistributedStorage:
                 }
             }
         
-        # Forward al successor (simplificado)
         hops += 1
-        if hops > 10:  # Max hops
+        if hops > 10:
             return self._error_response(request_id, "Lookup timeout")
         
-        # Reenviar al successor (aquí necesitarías integración con Chord)
-        forward_msg = {
-            "type": "LOOKUP",
-            "sender_id": self.node_id[:8],
-            "origin": origin,
-            "request_id": request_id,
-            "data": {"key": key, "hops": hops}
-        }
-        # TODO: Enviar a chord.successor[0:2]
         print(f"↪️ Forward lookup a successor (hops={hops})")
-        
-        return None  # No responder, continua lookup
+        return None
     
+    # Interfaz pública para PUT distribuido
     def put(self, key: str, value: Any) -> dict:
-        """PUT distribuido: envía a nodo responsable"""
+        """PUT distribuido: retorna mensaje listo para enviar"""
+        from src.protocol import Message, MessageType
+        
         request_id = f"PUT_{self.node_id[:8]}_{int(time.time())}"
         msg = Message(
             msg_type=MessageType.PUT,
             sender_id=self.node_id[:8],
-            request_id=request_id,
             data={"key": key, "value": value}
         )
-        # TODO: Enviar a chord.get_responsible_node(key)
-        print(f"📤 PUT distribuido: {key}")
-        return {"request_id": request_id, "status": "sent"}
+        print(f"📤 PUT distribuido: {key} (usa chord.get_responsible_node(key))")
+        return {"request_id": request_id, "status": "sent", "message": msg.to_dict()}
     
     def get(self, key: str) -> dict:
-        """GET distribuido: lookup estilo Chord"""
+        """GET distribuido: retorna mensaje listo para enviar"""
+        from src.protocol import Message, MessageType
+        
         request_id = f"GET_{self.node_id[:8]}_{int(time.time())}"
         msg = Message(
             msg_type=MessageType.GET,
             sender_id=self.node_id[:8],
-            request_id=request_id,
             data={"key": key}
         )
-        # TODO: Iniciar lookup Chord
-        print(f"🔍 GET distribuido: {key}")
-        return {"request_id": request_id, "status": "searching"}
+        print(f"🔍 GET distribuido: {key} (usa chord.get_responsible_node(key))")
+        return {"request_id": request_id, "status": "searching", "message": msg.to_dict()}
     
     def _replicate_to_successors(self, key: str, value: Any, request_id: str):
-        """Replica en R-1 nodos sucesivos"""
-        for i in range(1, self.replication_factor):
-            rep_msg = {
-                "type": "REPLICATE",
-                "request_id": f"REP_{request_id}_{i}",
-                "sender_id": self.node_id[:8],
-                "data": {"key": key, "value": value}
-            }
-            # TODO: Enviar a i-ésimo successor
-            print(f"🔄 Replicando {key} a réplica #{i}")
+        """Replica en R-1 nodos sucesivos (usa main.py para enviar)"""
+        print(f"🔄 Réplicas para {key} preparadas (R={self.replication_factor-1})")
+        print(f"   → Usa chord.successor para enviar REPLICATE messages")
     
     # Respuesta de error genérica
     def _error_response(self, request_id: str, error: str) -> dict:

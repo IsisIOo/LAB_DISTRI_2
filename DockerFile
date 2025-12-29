@@ -1,24 +1,21 @@
-# Imagen base con Python 3
 FROM python:3.11-slim
 
-# Evitar que Python genere .pyc y usar stdout sin buffer
 ENV PYTHONDONTWRITEBYTECODE=1
 ENV PYTHONUNBUFFERED=1
-
-# Crear directorio de trabajo
 WORKDIR /app
 
-# Copiar solo requirements si existiera (opcional)
-# Si no tienes requirements.txt, puedes omitir estas dos líneas
-# COPY requirements.txt .
-# RUN pip install --no-cache-dir -r requirements.txt
-
-# Instalar pytest (y cualquier otra lib que necesites para el lab)
 RUN pip install --no-cache-dir pytest
 
-# Copiar todo el proyecto dentro del contenedor
-COPY . /app
+# COPY MÁS EXPLÍCITO - ANTES del main.py
+COPY src/__init__.py src/
+COPY src/protocol.py src/
+COPY src/storage.py src/
+COPY src/overlay.py src/
+COPY src/networking.py src/
+COPY main.py ./
 
-# Comando por defecto: correr los tests
-# Si tu carpeta es "test" en lugar de "tests", usa: pytest test
-CMD ["pytest", "-v", "test"]
+# VERIFICACIÓN CRÍTICA
+RUN python -c "from src.protocol import Message, MessageType; print('✅ PROTOCOL OK')" || (echo "❌ PROTOCOL FAIL" && exit 1)
+RUN ls -la src/ && echo "✅ BUILD OK"
+
+CMD ["python", "main.py"]

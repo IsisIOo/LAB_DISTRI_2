@@ -1,0 +1,11 @@
+version: '3.8'
+services:
+  nodo:
+    build: .
+    stdin_open: true
+    tty: true
+    ports:
+      - "15000:5000"
+    environment:
+      - NODE_IP=0.0.0.0
+      - NODE_PORT=5000
