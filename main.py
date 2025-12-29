@@ -13,15 +13,15 @@ local_storage = {}  # Almacenamiento local simple
 
 def handle_incoming_message(msg:  dict, addr: tuple):
     """
-    Callback que se ejecuta cuando llega un mensaje al servidor. 
+    Callback que se ejecuta cuando llega un mensaje al servidor.
+    Si retorna un dict, el servidor lo enviará por el mismo socket.
     """
     msg_type = msg. get("type", "")
     
     # MENSAJES CHORD (internos)
     if msg_type. startswith("CHORD_"):
-        response = chord.handle_message(msg)
-        if response: 
-            pepe.send_message(addr[0], addr[1], response)
+        # Responder directamente por el mismo socket (networking maneja el envío)
+        return chord.handle_message(msg)
     
     # MENSAJES DE APLICACIÓN (los que TÚ envías)
     else:
@@ -44,6 +44,8 @@ def handle_incoming_message(msg:  dict, addr: tuple):
             handle_get(msg, addr)
         elif msg_type == "HEARTBEAT":
             handle_heartbeat(msg, addr)
+        # No retornamos respuesta para mensajes de aplicación en este flujo
+        return None
 
 def handle_join_app(msg, addr):
     """Maneja mensaje JOIN de aplicación"""
@@ -176,6 +178,8 @@ def main():
     # Crear nodo Chord (Módulo 3)
     chord = ChordNode(mi_ip, mi_puerto)
     chord.set_send_callback(pepe.send_message)
+    # Callback síncrono para peticiones de CHORD que esperan respuesta inmediata
+    chord.set_request_callback(pepe.request_response)
     
     print("\nEsperando que el servidor inicie...")
     time.sleep(2)

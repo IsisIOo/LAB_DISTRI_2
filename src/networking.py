@@ -3,7 +3,7 @@ import socket
 import threading
 import json
 import logging
-from typing import Callable, Dict, Any
+from typing import Callable, Dict, Any, Optional
 
 # Configuración básica de logging con timestamp
 logging.basicConfig(
@@ -12,7 +12,8 @@ logging.basicConfig(
 )
 
 # Tipo de callback: función que recibe el dict del mensaje y la dirección del cliente
-MessageHandler = Callable[[Dict[str, Any], tuple], None]
+# y devuelve opcionalmente una respuesta (dict) que será enviada por el mismo socket.
+MessageHandler = Callable[[Dict[str, Any], tuple], Optional[Dict[str, Any]]]
 
 
 class TCPServer:
@@ -94,7 +95,15 @@ class TCPServer:
                             msg = json.loads(line)
                             logging.info(f"Mensaje recibido de {client_addr}: {msg}")
                             # Llamar al handler para que otro módulo procese el mensaje
-                            self.message_handler(msg, client_addr)
+                            response = self.message_handler(msg, client_addr)
+                            # Si el handler retorna una respuesta, enviarla por el mismo socket
+                            if response is not None:
+                                try:
+                                    json_str = json.dumps(response)
+                                    client_socket.sendall((json_str + "\n").encode("utf-8"))
+                                    logging.info(f"Respuesta enviada a {client_addr}: {response}")
+                                except Exception as e:
+                                    logging.error(f"Error enviando respuesta a {client_addr}: {e}")
                         except json.JSONDecodeError as e:
                             logging.error(
                                 f"Error al parsear JSON desde {client_addr}: {e} | data={line}"
@@ -105,7 +114,7 @@ class TCPServer:
                 logging.exception(f"Error manejando conexión con {client_addr}: {e}")
 
 
-    def send_message(self, ip: str, port: int, msg: Dict[str, Any], timeout: float = 5.0):
+    def send_message(self, ip: str, port: int, msg: Dict[str, Any], timeout: float = 5.0) -> bool:
         """
         Envía un mensaje JSON a (ip, port) usando TCP.
         - msg debe ser un dict serializable a JSON.
@@ -120,7 +129,54 @@ class TCPServer:
         try:
             sock.connect((ip, port))
             sock.sendall(data)
+            return True
         except (ConnectionRefusedError, socket.timeout) as e:
             logging.error(f"No se pudo enviar mensaje a {ip}:{port}: {e}")
+            return False
         finally:
             sock.close()
+
+    def request_response(self, ip: str, port: int, msg: Dict[str, Any], timeout: float = 5.0) -> Optional[Dict[str, Any]]:
+        """
+        Envía un mensaje JSON a (ip, port) y espera una respuesta JSON en la
+        misma conexión. Retorna el dict de la respuesta o None si falla.
+        """
+        json_str = json.dumps(msg)
+        data = (json_str + "\n").encode("utf-8")
+        logging.info(f"Solicitando (request/response) a {ip}:{port}: {msg}")
+
+        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        sock.settimeout(timeout)
+        try:
+            sock.connect((ip, port))
+            sock.sendall(data)
+
+            buffer = ""
+            # Esperar una sola línea de respuesta
+            while True:
+                chunk = sock.recv(4096)
+                if not chunk:
+                    break
+                buffer += chunk.decode("utf-8")
+                if "\n" in buffer:
+                    line, _rest = buffer.split("\n", 1)
+                    line = line.strip()
+                    if not line:
+                        return None
+                    try:
+                        response = json.loads(line)
+                        logging.info(f"Respuesta recibida desde {ip}:{port}: {response}")
+                        return response
+                    except json.JSONDecodeError as e:
+                        logging.error(f"Error parseando respuesta desde {ip}:{port}: {e} | data={line}")
+                        return None
+        except (ConnectionRefusedError, socket.timeout) as e:
+            logging.error(f"Fallo request/response con {ip}:{port}: {e}")
+        except Exception as e:
+            logging.exception(f"Error en request/response con {ip}:{port}: {e}")
+        finally:
+            try:
+                sock.close()
+            except Exception:
+                pass
+        return None
