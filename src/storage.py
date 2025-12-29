@@ -12,14 +12,18 @@ from typing import Dict, Optional, Tuple, Any
 from src.protocol import Message, MessageType
 
 class DistributedStorage:
-    def __init__(self, node_id: str, send_callback):
+    def __init__(self, node_id: str, send_callback, chord=None):
         self.node_id = node_id
         self.send_callback = send_callback
-        self.local_storage: Dict[str, dict] = {}  # {key: {"value": v, "timestamp": t, "replicas": 0}}
-        self.pending_requests: Dict[str, dict] = {}  # {request_id: {"callback": cb, "timeout": t}}
+        self.chord = chord  # Para routing
+        self.local_storage: Dict[str, dict] = {}
+        self.pending_requests: Dict[str, dict] = {}  # {req_id: {"future": future}}
         self.replication_factor = 2
-        self.lookup_lock = threading.Lock()
-
+        self.request_timeout = 5.0
+        
+        # Hilo para timeouts
+        self.timeout_thread = threading.Thread(target=self._timeout_checker, daemon=True)
+        self.timeout_thread.start()
 
     # Utiliza algoritmo SHA-1 para hashing de claves 
     def hash_key(self, key: str) -> str:
@@ -164,30 +168,79 @@ class DistributedStorage:
     
     # Interfaz pública para PUT distribuido
     def put(self, key: str, value: Any) -> dict:
-        """PUT distribuido: retorna mensaje listo para enviar"""
+        """PUT distribuido asíncrono"""
         from src.protocol import Message, MessageType
         
         request_id = f"PUT_{self.node_id[:8]}_{int(time.time())}"
-        msg = Message(
-            msg_type=MessageType.PUT,
-            sender_id=self.node_id[:8],
-            data={"key": key, "value": value}
-        )
-        print(f"📤 PUT distribuido: {key} (usa chord.get_responsible_node(key))")
-        return {"request_id": request_id, "status": "sent", "message": msg.to_dict()}
+        msg = Message(MessageType.PUT, self.node_id[:8], {"key": key, "value": value})
+        
+        if self.chord:
+            responsible = self.chord.get_responsible_node(key)
+            if responsible:
+                self.send_callback(responsible[0], responsible[1], msg.to_dict())
+                print(f"📤 PUT {key} → {responsible[2][:8]}")
+        
+        return {"request_id": request_id, "status": "sent"}
     
-    def get(self, key: str) -> dict:
-        """GET distribuido: retorna mensaje listo para enviar"""
+    def get(self, key: str, timeout: float = None) -> Optional[dict]:
+        """GET distribuido SÍNCRONO - Espera respuesta"""
+        timeout = timeout or self.request_timeout
+        
         from src.protocol import Message, MessageType
         
         request_id = f"GET_{self.node_id[:8]}_{int(time.time())}"
-        msg = Message(
-            msg_type=MessageType.GET,
-            sender_id=self.node_id[:8],
-            data={"key": key}
-        )
-        print(f"🔍 GET distribuido: {key} (usa chord.get_responsible_node(key))")
-        return {"request_id": request_id, "status": "searching", "message": msg.to_dict()}
+        msg = Message(MessageType.GET, self.node_id[:8], {"key": key})
+        
+        # Crear future (promesa de respuesta)
+        future = {"result": None, "error": None, "done": threading.Event()}
+        self.pending_requests[request_id] = future
+        
+        # Enviar si hay chord
+        if self.chord:
+            responsible = self.chord.get_responsible_node(key)
+            if responsible:
+                print(f"🔍 GET {key} → {responsible[2][:8]} ({responsible[0]}:{responsible[1]})")
+                self.send_callback(responsible[0], responsible[1], msg.to_dict())
+            else:
+                future["error"] = "no_responsible"
+                future["done"].set()
+        else:
+            # Local fallback
+            result = self.get_local(key)
+            future["result"] = result
+            future["done"].set()
+        
+        # Esperar respuesta o timeout
+        if future["done"].wait(timeout):
+            if future["error"]:
+                print(f"❌ GET error: {future['error']}")
+                return None
+            return future["result"]
+        else:
+            print(f"⏰ GET timeout: {key}")
+            del self.pending_requests[request_id]
+            return None
+    
+    def _handle_result(self, msg: dict):
+        """Procesa respuestas RESULT entrantes"""
+        request_id = msg.get("request_id")
+        if request_id and request_id in self.pending_requests:
+            future = self.pending_requests[request_id]
+            future["result"] = msg.get("data")
+            future["done"].set()
+            del self.pending_requests[request_id]
+    
+    def _timeout_checker(self):
+        """Limpia requests expirados"""
+        while True:
+            time.sleep(1)
+            now = time.time()
+            expired = [rid for rid, req in self.pending_requests.items() 
+                      if now - req.get("sent_time", 0) > self.request_timeout]
+            for rid in expired:
+                self.pending_requests[rid]["error"] = "timeout"
+                self.pending_requests[rid]["done"].set()
+                del self.pending_requests[rid]
     
     def _replicate_to_successors(self, key: str, value: Any, request_id: str):
         """Replica en R-1 nodos sucesivos (usa main.py para enviar)"""
