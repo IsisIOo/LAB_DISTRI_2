@@ -36,6 +36,8 @@ class ChordNode:
     def __init__(self, ip: str, port: int, existing_node:  Tuple[str, int] = None, send_callback = None):
         self.ip = ip
         self.port = port
+        self.mi_ip = ip           # ⭐ PARA STORAGE.GET()
+        self.mi_puerto = port     # ⭐ PARA STORAGE.GET()
         self.send_callback = send_callback  
         self.request_callback = None
         # Mapa de vecinos conocidos por node_id → (ip, port)

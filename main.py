@@ -94,6 +94,8 @@ def main():
     print(f"📡 TCP {mi_ip}:{mi_puerto} [{nombre_nodo}]")
     
     chord = ChordNode(mi_ip, mi_puerto)
+    chord.mi_ip = mi_ip
+    chord.mi_puerto = mi_puerto
     chord.set_send_callback(pepe.send_message)
     
     storage = DistributedStorage(chord.node_id, pepe.send_message, chord)

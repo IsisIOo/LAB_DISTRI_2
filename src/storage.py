@@ -183,15 +183,23 @@ class DistributedStorage:
         return {"request_id": request_id, "status": "sent"}
     
     def get(self, key: str, timeout: float = None) -> Optional[dict]:
-        """GET distribuido SÍNCRONO - Espera respuesta"""
         timeout = timeout or self.request_timeout
         
-        from src.protocol import Message, MessageType
+        # ⭐ OBTENER IP/PUERTO ACTUAL (desde main.py globals o chord)
+        sender_ip = getattr(self.chord, 'mi_ip', '192.168.0.14')  # ← FIX 1
+        sender_port = getattr(self.chord, 'mi_puerto', 15000)      # ← FIX 2
         
         request_id = f"GET_{self.node_id[:8]}_{int(time.time())}"
-        msg = Message(MessageType.GET, self.node_id[:8], {"key": key})
+        msg = {
+            "type": "GET",
+            "request_id": request_id,
+            "sender_id": self.node_id[:8],
+            "sender_ip": sender_ip,      # ← FIX 3 ⭐ CRÍTICO
+            "sender_port": sender_port,  # ← FIX 4 ⭐ CRÍTICO
+            "data": {"key": key}
+        }
         
-        # Crear future (promesa de respuesta)
+        # Crear future
         future = {"result": None, "error": None, "done": threading.Event()}
         self.pending_requests[request_id] = future
         
@@ -200,26 +208,10 @@ class DistributedStorage:
             responsible = self.chord.get_responsible_node(key)
             if responsible:
                 print(f"🔍 GET {key} → {responsible[2][:8]} ({responsible[0]}:{responsible[1]})")
-                self.send_callback(responsible[0], responsible[1], msg.to_dict())
+                self.send_callback(responsible[0], responsible[1], msg)  # ← SIN .to_dict()
             else:
                 future["error"] = "no_responsible"
                 future["done"].set()
-        else:
-            # Local fallback
-            result = self.get_local(key)
-            future["result"] = result
-            future["done"].set()
-        
-        # Esperar respuesta o timeout
-        if future["done"].wait(timeout):
-            if future["error"]:
-                print(f"❌ GET error: {future['error']}")
-                return None
-            return future["result"]
-        else:
-            print(f"⏰ GET timeout: {key}")
-            del self.pending_requests[request_id]
-            return None
     
     def _handle_result(self, msg: dict):
         """Procesa respuestas RESULT entrantes"""
