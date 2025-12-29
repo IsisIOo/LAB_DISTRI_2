@@ -10,10 +10,10 @@ import logging
 
 #Importar protocol.py para obtener los mensajes disponibles
 try:
-    from src.protocol import MessageType, Message, serialize_message, deserialize_message
+    from src.protocol import MessageType, Message, serializeMessage, deserialize_message
     PROTOCOL_AVAILABLE = True
 except ImportError:
-    print("protocol.py no disponible.")
+    #print("protocol.py no disponible.")
     PROTOCOL_AVAILABLE = False
 
 # Configurar logging para debugging (se puede borrar luego)
@@ -23,9 +23,7 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-
-#clase chordnode: mantiene successor, predecessor y tabla de finger simplificada
-
+#clase chordnode para importar
 class ChordNode:
 
     """ __init__
@@ -34,49 +32,46 @@ class ChordNode:
     existing_node (ip, port) de un nodo existente para unirse al anillo
     salida: - """
     def __init__(self, ip: str, port: int, existing_node:  Tuple[str, int] = None, send_callback = None):
-        self.ip = ip
-        self.port = port
-        self.send_callback = send_callback  
-        self.request_callback = None
-        # Mapa de vecinos conocidos por node_id → (ip, port)
-        self.neighbors: Dict[str, Tuple[str, int]] = {}
+        self.ip = ip # Dirección IP del nodo
+        self.port = port # Puerto del nodo
+        self.send_callback = send_callback  # Función callback para enviar mensajes
+        self.request_callback = None # Función callback sincrono
 
+        # mapa de vecinos conocidos
+        self.neighbors: Dict[str, Tuple[str, int]] = {}
         
-        # 1. CALCULAR EL ID DEL NODO (Hash SHA-1 de ip:port)
+        # paso 1: calcular ID del nodo usando SHA-1
         node_string = f"{ip}:{port}"
         self.node_id = self._calculate_hash(node_string)
         logger.info(f"Nodo creado: ID={self.node_id[:8]}... ({ip}:{port})")
         
-        # 2. ESTRUCTURAS DEL ANILLO (ESENCIALES)
-        self.successor: Optional[Tuple[str, int, str]] = None  # (ip, port, node_id)
-        self.predecessor: Optional[Tuple[str, int, str]] = None  # (ip, port, node_id)
+        # paso 2_ inicializar successor y predecessor
+        self.successor: Optional[Tuple[str, int, str]] = None  # ambso tienen estructura (ip, port, node_id)
+        self.predecessor: Optional[Tuple[str, int, str]] = None 
         
-        # 3. TABLA DE FINGER SIMPLIFICADA (para Chord reducido)
+        # paso 3: inicializar finger table
         self.finger_table: List[Tuple[str, int, str]] = []  # Lista de (ip, port, node_id)
         
-        # 4. ALMACENAMIENTO LOCAL (para pruebas)
+        # paso 4: almacen local de datos clave-valor
         self.local_store: Dict[str, Any] = {}
         
-        # 5. ESTADO Y CONFIGURACIÓN
+        # paso 5: estado del nodo
         self.is_joined = False
         self.running = True
         
-        # 6. HILOS PARA OPERACIONES PERIÓDICAS
+        # paso 6: hilos para operaciones periódicas de mantenimiento
         self.stabilize_thread = None
         self.fix_fingers_thread = None
         self.check_predecessor_thread = None
         
-        # 7. UNIRSE AL ANILLO SI SE PROVEE NODO EXISTENTE
+        # paso 7: unirse al anillo 
         if existing_node:
             self.join_network(existing_node)
         else:
-            # Primer nodo del anillo: se referencia a sí mismo
+            # al ser el primer nodo del anillo se referencia a si mismo como sucesor
             self.successor = (self.ip, self.port, self.node_id)
             self.predecessor = None
             self.is_joined = True
-            # No arrancamos hilos aún para tests simples; la app puede iniciarlos luego
-    
-
 
     
     #  FUNCIONES HASH 
@@ -320,7 +315,7 @@ class ChordNode:
     # FUNCIONES DE MANTENIMIENTO DEL ANILLO 
     
     """_start_maintenance_threads
-    descripcion: Inicia hilos para mantenimiento periódico del anillo.
+    descripcion: inicia hilos para mantenimiento periódico del anillo.
     entrada: -
     salida: - """
     def _start_maintenance_threads(self):
@@ -337,8 +332,11 @@ class ChordNode:
         
         logger.info("Hilos de mantenimiento iniciados")
 
+    """start_maintenance
+    descripcion: API pública para iniciar hilos de mantenimiento cuando el nodo ya está en el anillo. Caso de ser el primer nodo
+    entrada: -
+    salida: -"""
     def start_maintenance(self):
-        """API pública para iniciar hilos de mantenimiento cuando el nodo ya está en el anillo."""
         if not self.is_joined:
             logger.warning("No se puede iniciar mantenimiento: nodo no unido al anillo")
             return
@@ -923,42 +921,42 @@ class ChordNode:
 
     """_handle_notify
     descripcion: Maneja notificación de posible nuevo predecessor
-    entrada: message Diccionario con el mensaje CHORD_NOTIFY
-    salida: None (no requiere respuesta)
+    entrada: Diccionario con el mensaje CHORD_NOTIFY
+    salida: none (no requiere respuesta)
     """
     def _handle_notify(self, message:  Dict) -> Optional[Dict]:
 
-        #Obtenemos información necesaria
+        #obtenemos información necesaria
         new_node_id = message.get("node_id")
         new_ip = message.get("ip")
         new_port = message.get("port")
         
-        #En caso de que hayan errores
+        #en caso de errores con los datos
         if not new_node_id or not new_ip or not new_port:
             logger.warning("NOTIFY con datos incompletos")
             return None
         
         logger.info(f"NOTIFY recibido de {new_node_id[: 8]}... ({new_ip}:{new_port})")
         
-        # Caso 1: No hay predecessor
+        # no hay predecesor aun
         if not self.predecessor:
             self.predecessor = (new_ip, new_port, new_node_id)
             logger.info(f"Predecessor establecido: {new_node_id[:8]}...")
             return None
         
-        # Caso 2: El nodo que notifica es el mismo que mi predecessor actual
+        # el nuevo nodo es mi predecesor 
         if new_node_id == self.predecessor[2]:
-
-            # Actualizar por si cambió IP/puerto (Es raro de que pase, pero por si acaso)
+            #actualizar info por si cambia
             self.predecessor = (new_ip, new_port, new_node_id)
             logger.debug(f"Predecessor confirmado: {new_node_id[:8]}...")
             return None
         
-        # Caso 3: Verificar si el nuevo nodo está entre mi predecessor y yo
+        # ver si el nuevo nodo está entre el predecesor del nodo y el nodo mismo
         if self._is_between(new_node_id, self. predecessor[2], self.node_id, inclusive=False):
             old_pred = self.predecessor
             self. predecessor = (new_ip, new_port, new_node_id)
             logger.info(f"Predecessor actualizado: {old_pred[2][:8]}... → {new_node_id[:8]}...")
+        # si no está en el intervalo ignorar
         else:
             logger.debug(f"NOTIFY ignorado: {new_node_id[:8]}... no está entre predecessor y yo")
         
@@ -1069,31 +1067,32 @@ class ChordNode:
         logger.info("Predecessor eliminado por fallo")
 
 
-# === Funciones públicas auxiliares para tests ===
-def create_node_id(ip: str, port: int) -> str:
-    """Crea el ID de nodo como SHA-1 de "ip:port" (40 hex)."""
-    return hashlib.sha1(f"{ip}:{port}".encode()).hexdigest()
+# funciones públicas para los tests 
+"""calculate_hash e is_between
+son las mismas funciones que se encuentran dentro de la clase ChordNode, pero definidas aquí para facilitar los tests"""
+def calculate_hash(text: str) -> str:
+    return hashlib.sha1(text.encode()).hexdigest()
 
 
-def is_key_in_range(key: str, start: str, end: str, inclusive_end: bool = True) -> bool:
-    """Verifica si key está en el intervalo circular (start, end],
-    considerando wraparound. Usa enteros base-16 como en SHA-1.
-    Cuando inclusive_end=True, el extremo end se incluye.
-    """
+def _is_between(self, key: str, start: str, end: str, inclusive: bool = True) -> bool:
     key_int = int(key, 16)
     start_int = int(start, 16)
     end_int = int(end, 16)
-
+    
+    #Caso en el que no damos la vuelta el anillo, no vamos a 0
     if start_int < end_int:
-        return start_int < key_int <= end_int if inclusive_end else start_int < key_int < end_int
+        #inclusive, end está incluido en el intervalo, valor necesario para evitar duplicados
+        if inclusive:
+            return start_int < key_int <= end_int
+        return start_int < key_int < end_int
+    
+    #Caso en el que damos la vuelta al anillo, Por ejemplo estamos en 50 y queremos llegar a 10, pasamos por el 0
     elif start_int > end_int:
-        # Rango con wraparound: (start, max] U [0, end]
-        if (start_int < key_int) or (key_int <= end_int):
-            return True
-        # Heurística para cubrir casos de pruebas con start cercano al máximo
-        # donde se espera incluir claves muy altas cercanas a start.
-        if start.lower() == 'f' * 40 and key.lower().startswith('f' * 39):
-            return True
-        return False
+        if inclusive:
+            return start_int < key_int or key_int <= end_int
+        return start_int < key_int or key_int < end_int
+    
     else:  # start == end
-        return key_int == start_int if inclusive_end else False
+        if inclusive:
+            return key_int == start_int
+        return False
