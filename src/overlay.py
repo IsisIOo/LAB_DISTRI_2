@@ -1,4 +1,4 @@
-#MODULO 3: OVERLAY - CORD
+#MODULO 3: OVERLAY - CHORD
 #Anillo hash
 import hashlib
 import json
@@ -24,19 +24,16 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-"""
-Nodo del anillo Chord reducido.
-chordnode: Mantiene successor, predecessor y tabla de finger simplificada.
-"""
+
+#clase chordnode: mantiene successor, predecessor y tabla de finger simplificada
+
 class ChordNode:
 
-    """
+    """ __init__
     descripcion: Inicializa un nuevo nodo Chord
     entrada: ip Dirección IP del nodo, port Puerto del nodo, 
     existing_node (ip, port) de un nodo existente para unirse al anillo
-    salida: -
-    """
-    # LÍNEA 39 - En __init__, AGREGAR este parámetro:
+    salida: - """
     def __init__(self, ip: str, port: int, existing_node:  Tuple[str, int] = None, send_callback = None):
         self.ip = ip
         self.port = port
@@ -71,7 +68,7 @@ class ChordNode:
         if existing_node:
             self.join_network(existing_node)
     
-    # ==================== FUNCIONES ESENCIALES DE HASH ====================
+    #  FUNCIONES HASH 
     """
     _calculate_hash
     descripcion: calcula el hash SHA-1 de una cadena
@@ -81,12 +78,11 @@ class ChordNode:
     def _calculate_hash(self, key: str) -> str:
         return hashlib.sha1(key.encode()).hexdigest()
     
-    """
-    is_between
+    
+    """is_between
     descripcion: Verifica si una clave está en cierto intervalo en el anillo.
     entrada: key hash a verificar, start inicio del intervalo, end fin del intervalo, inclusive si end es inclusivo
-    salida: booleano indicando si key está en el intervalo
-    """  
+    salida: booleano indicando si key está en el intervalo"""  
     def _is_between(self, key: str, start: str, end: str, inclusive: bool = False) -> bool:
         # Convertir hashes a enteros para comparación
         key_int = int(key, 16)
@@ -104,19 +100,20 @@ class ChordNode:
             else:
                 return start_int < key_int or key_int < end_int
             
-    #Función para devolver el mensaje de que se envio sin problemas
+
+    """set_send_callback
+    descripcion: Configura la función callback para enviar mensajes.
+    entrada: callback función que envía mensajes (ip, port, message)
+    salida: -"""      
     def set_send_callback(self, callback):
-        """Configura la función para enviar mensajes"""
         self.send_callback = callback
     
-    # ==================== OPERACIONES BÁSICAS DEL ANILLO ====================
-    
-    
+
+    #  OPERACIONES DEL ANILLO 
     """join_network
     descripcion: Une este nodo al anillo Chord usando un nodo existente.
     entrada: existing_node (ip, port) de un nodo existente
-    salida: -
-    """
+    salida: -"""
     def join_network(self, existing_node: Tuple[str, int]):
         existing_ip, existing_port = existing_node
         
@@ -158,8 +155,7 @@ class ChordNode:
     """_find_successor_remote
     descripcion: Encuentra el successor de una clave contactando un nodo remoto.
     entrada: key_id hash de la clave, target_ip IP del nodo remoto, target_port puerto del nodo remoto
-    salida: (ip, port, node_id) del successor o None
-    """ 
+    salida: (ip, port, node_id) del successor o None""" 
     def _find_successor_remote(self, key_id: str, target_ip: str, target_port: int) -> Optional[Tuple[str, int, str]]:
         """Encuentra el successor contactando un nodo remoto (VERSIÓN REAL)"""
         logger.debug(f"Buscando successor para clave {key_id[:8]}... en {target_ip}:{target_port}")
@@ -186,8 +182,7 @@ class ChordNode:
     """_notify_successor
     descripcion: Notifica al successor que podríamos ser su nuevo predecessor.
      entrada: succ_ip IP del successor, succ_port puerto del successor
-    salida: -
-    """
+    salida: -"""
     def _notify_successor(self, succ_ip: str, succ_port: int):
         """Notifica al successor (VERSIÓN REAL)"""
         logger.debug(f"Notificando a {succ_ip}:{succ_port} como possible predecessor")
@@ -210,8 +205,7 @@ class ChordNode:
     """find_successor
     descripcion: Encuentra el nodo responsable de una clave en el anillo.   
     entrada: key_id hash de la clave a buscar
-    salida: (ip, port, node_id) del nodo responsable, o None
-    """
+    salida: (ip, port, node_id) del nodo responsable, o None"""
     def find_successor(self, key_id: str) -> Optional[Tuple[str, int, str]]:
         if not self.is_joined:
             logger.warning("Nodo no unido al anillo")
@@ -243,8 +237,7 @@ class ChordNode:
     """_closest_preceding_node 
     descripcion: Encuentra en la finger table el nodo con ID más grande pero menor que key_id. (para busqueda de responsables de key)
     entrada: key_id hash de la clave
-     salida: (ip, port, node_id) del nodo encontrado o None
-    """
+     salida: (ip, port, node_id) del nodo encontrado o None"""
     def _closest_preceding_node(self, key_id: str) -> Optional[Tuple[str, int, str]]:
         # Versión simplificada: usar finger table si existe
         for node in reversed(self.finger_table):  # Empezar por los más lejanos
@@ -253,13 +246,15 @@ class ChordNode:
         
         return None
     
-    # ==================== MANTENIMIENTO DEL ANILLO ====================
+
+
+
+    # FUNCIONES DE MANTENIMIENTO DEL ANILLO 
     
     """_start_maintenance_threads
     descripcion: Inicia hilos para mantenimiento periódico del anillo.
     entrada: -
-    salida: -
-    """
+    salida: - """
     def _start_maintenance_threads(self):
         self.stabilize_thread = threading.Thread(target=self._stabilize_loop, daemon=True)
         self.fix_fingers_thread = threading.Thread(target=self._fix_fingers_loop, daemon=True)
@@ -311,6 +306,8 @@ class ChordNode:
         except Exception as e:
             logger.warning(f"No se pudo contactar successor {succ_id[:8]}...: {e}")
     
+
+
     """_fix_fingers_loop
     descripcion: Bucle para actualizar periódicamente la finger table.
     entrada: -
@@ -324,6 +321,8 @@ class ChordNode:
             
             time.sleep(30)
     
+
+
     """_update_finger_table
     descripcion: Actualiza la finger table del nodo.
     entrada: -
@@ -342,6 +341,8 @@ class ChordNode:
                 # En versión real: pedir successor de current
                 # current = self._get_successor_of(current[0], current[1])
     
+
+
     """_check_predecessor_loop
     descripcion: Bucle para verificar si el predecessor sigue activo. Esto para rearmar el chord de ser necesario.
     entrada: -
@@ -356,7 +357,7 @@ class ChordNode:
             
             time.sleep(15)
     
-    # ==================== API PÚBLICA ====================
+    #  API PÚBLICA 
     
     """get_node_info
     descripcion: Retorna información del nodo para debugging.
@@ -376,8 +377,7 @@ class ChordNode:
     """get_responsible_node
     descripcion: Determina qué nodo es responsable de una clave.
     entrada: key Clave a buscar (string) 
-    salida: (ip, port, node_id) del nodo responsable sino None
-    """
+    salida: (ip, port, node_id) del nodo responsable sino None"""
     def get_responsible_node(self, key: str) -> Optional[Tuple[str, int, str]]:
         key_hash = self._calculate_hash(key)
         return self.find_successor(key_hash)
@@ -402,14 +402,11 @@ class ChordNode:
         
         logger.info("Nodo ha salido del anillo")
     
-    # ==================== MANEJO DE MENSAJES ====================
-    
-    def handle_message(self, message: Dict[str, Any]) -> Optional[Dict[str, Any]]:
-        """
-        Procesa mensajes entrantes para el overlay.
+    # FUNCIONES DE MANEJO DE MENSAJES
+    """Procesa mensajes entrantes para el overlay.
         entrada: message Diccionario con el mensaje recibido
-        salida:  Diccionario con la respuesta o None
-        """
+        salida:  Diccionario con la respuesta o None"""
+    def handle_message(self, message: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         msg_type = message.get("type")
         
         # ⭐ AGREGAR LOS NOMBRES CORRECTOS (con prefijo CHORD_)
@@ -456,6 +453,8 @@ class ChordNode:
         
         return response
     
+
+
     """_handle_find_successor
     descripcion: Maneja búsqueda de successor.
     entrada: message Diccionario con el mensaje FIND_SUCCESSOR
@@ -474,6 +473,8 @@ class ChordNode:
         
         return response
     
+
+
     """_handle_update_predecessor
     descripcion: Actualiza el predecessor.
     entrada: message Diccionario con el mensaje UPDATE_PREDECESSOR
@@ -491,6 +492,8 @@ class ChordNode:
         
         return {"type": "ACK"}
     
+
+
     """_handle_heartbeat
     descripcion: Responde a heartbeat.
     entrada: message Diccionario con el mensaje HEARTBEAT
@@ -501,18 +504,20 @@ class ChordNode:
             "timestamp": time.time()
         }
 
+
+    """
+    _handle_notify
+    descripcion: Maneja notificación de posible nuevo predecessor
+    entrada: message Diccionario con el mensaje CHORD_NOTIFY
+    salida: None (no requiere respuesta)
+    """
     def _handle_notify(self, message: Dict) -> Optional[Dict]:
-        """
-        _handle_notify
-        descripcion: Maneja notificación de posible nuevo predecessor
-        entrada: message Diccionario con el mensaje CHORD_NOTIFY
-        salida: None (no requiere respuesta)
-        """
+
         new_pred_id = message.get("node_id")
         new_pred_ip = message.get("ip")
         new_pred_port = message.get("port")
         
-        logger.info(f"📢 NOTIFY recibido de {new_pred_id[: 8]}...  ({new_pred_ip}:{new_pred_port})")
+        logger.info(f"recibido de {new_pred_id[: 8]}...  ({new_pred_ip}:{new_pred_port})")
         
         # Actualizar predecessor si: 
         # 1. No tenemos predecessor, O
@@ -533,73 +538,33 @@ class ChordNode:
         
         return None  # NOTIFY no requiere respuesta
 
-# ==================== FUNCIONES DE UTILIDAD ====================
+# FUNCIONES DE UTILIDAD 
 
 """create_node_id
     descripcion: Crea un ID de nodo basado en IP y puerto.
     entrada: ip Dirección IP del nodo, port Puerto del nodo
-    salida: string con el hash SHA-1 del nodo
-    """
+    salida: string con el hash SHA-1 del nodo"""
 def create_node_id(ip: str, port: int) -> str:
-    """Crea un ID de nodo basado en IP y puerto."""
     node_string = f"{ip}:{port}"
     return hashlib.sha1(node_string.encode()).hexdigest()
 
 """is_key_in_range
     descripcion: Determina si un hash está en un rango en el anillo circular.
-    entrada: key_hash Hash a verificar, range_start Inicio del rango, range_end Fin del rango, inclusive_end Si el fin es inclusivo
+    entrada: key_hash Hash a verificar, range_start inicio del rango, range_end fin del rango, inclusive_end Si el rango fin es inclusivo
     salida: Booleano indicando si el hash está en el rango"""
 def is_key_in_range(key_hash: str, range_start: str, range_end: str, inclusive_end: bool = True) -> bool:
     k = int(key_hash, 16)
     s = int(range_start, 16)
     e = int(range_end, 16)
     
+    #Caso en el que no damos la vuelta el anillo, no vamos a 0
     if s < e:
+        #inclusive end, e está incluido en el intervalo, valor necesario para evitar duplicados 
         if inclusive_end:
-            return s < k <= e
+            return s < k <= e # la llave K está entre s y e de un intervalo común 
         return s < k < e
-    else:
+    #Caso en el que damos la vuelta al anillo, Por ejemplo estamos en 50 y queremos llegar a 10, pasamos por el 0
+    else: #s>e
         if inclusive_end:
             return s < k or k <= e
         return s < k or k < e
-
-
-# ==================== EJEMPLO DE USO ====================
-"""
-if __name__ == "__main__":
-    #Ejemplo mínimo para probar el overlay.
-
-    print("=== Testing Chord Overlay ===")
-    
-    # 1. Crear primer nodo (inicia el anillo)
-    node1 = ChordNode("192.168.1.100", 5000)
-    print(f"Nodo 1 creado: {node1.node_id[:8]}")
-    print(f"Info: {node1.get_node_info()}")
-    
-    # 2. Crear segundo nodo que se une al primero
-    node2 = ChordNode("192.168.1.101", 5001, ("192.168.1.100", 5000))
-    print(f"\nNodo 2 creado: {node2.node_id[:8]}")
-    print(f"Info: {node2.get_node_info()}")
-    
-    # 3. Buscar nodo responsable para una clave
-    test_key = "mi_clave_secreta"
-    responsible = node1.get_responsible_node(test_key)
-    if responsible:
-        ip, port, node_id = responsible
-        print(f"\nPara clave '{test_key}' -> Nodo responsable: {node_id[:8]} ({ip}:{port})")
-    
-    # 4. Simular mensajes
-    join_msg = {
-        "type": "JOIN_REQUEST",
-        "node_id": create_node_id("192.168.1.102", 5002),
-        "ip": "192.168.1.102",
-        "port": 5002
-    }
-    
-    response = node1.handle_message(join_msg)
-    print(f"\nRespuesta a JOIN_REQUEST: {response}")
-    
-    # 5. Salir ordenadamente
-    node2.leave_network()
-    print("\nPrueba completada")
-    """
