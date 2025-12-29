@@ -15,6 +15,8 @@ storage = None
 def handle_incoming_message(msg: dict, addr: tuple):
     msg_type = msg.get("type", "")
     
+    print(f"📨 {msg_type} de {addr[0]}:{addr[1]}") 
+
     # CHORD MENSJES
     if msg_type.startswith("CHORD_") or msg_type in [
         "CHORD_GET_PRED", "CHORD_NOTIFY", "CHORD_GET_PREDECESSOR",
@@ -26,7 +28,7 @@ def handle_incoming_message(msg: dict, addr: tuple):
         return
     
     # STORAGE (PUT/GET/REPLICATE) - ROUTING SILENCIOSO
-    if msg_type in ["PUT", "GET", "REPLICATE", "RESULT"]:
+    if msg_type in ["PUT", "REPLICATE", "RESULT"]:
         response = storage.handle_storage_message(msg)
         if response:
             # ⭐ CRÍTICO: Enviar respuesta al ORIGEN (NO al addr)
@@ -36,6 +38,25 @@ def handle_incoming_message(msg: dict, addr: tuple):
                 pepe.send_message(sender_ip, sender_port, response)
             else:
                 pepe.send_message(addr[0], addr[1], response)
+        return
+    
+    if msg_type == "GET":
+        key = msg.get("data", {}).get("key")
+        result = storage.get_local(key)
+        
+        response = {
+            "type": "RESULT",
+            "data": {
+                "key": key,
+                "value": result["value"] if result else None,
+                "found": result is not None,
+                "node": chord.node_id[:8]
+            }
+        }
+        
+        # ⭐ SIEMPRE responder al que preguntó (addr)
+        pepe.send_message(addr[0], addr[1], response)
+        print(f"📤 RESULT {key} → {addr[0]}:{addr[1]}")
         return
     
     # JOIN aplicación
@@ -136,12 +157,26 @@ def main():
             # GET SÍNCRONO
             elif comando == "get" and len(cmd) >= 2:
                 key = cmd[1]
-                result = storage.get(key)
-                if result and result.get("data", {}).get("found"):
-                    data = result["data"]
-                    print(f"✅ {key} = '{data['value']}' [{data.get('node', 'local')}]")
+                responsible = chord.get_responsible_node(key)
+                
+                # ⭐ FIX: Si es LOCAL, NO enviar mensaje
+                if responsible and responsible[0] == mi_ip and responsible[1] == mi_puerto:
+                    result = storage.get_local(key)
+                    if result:
+                        print(f"✅ {key} = '{result['value']}' [LOCAL]")
+                    else:
+                        print(f"❌ {key} no encontrado [LOCAL]")
                 else:
-                    print(f"❌ {key} no encontrado")
+                    msg = {"type": "GET", "data": {"key": key}}
+                    pepe.send_message(responsible[0], responsible[1], msg)
+                    print(f"🔍 GET {key} → {responsible[2][:8]}")
+                    time.sleep(2)
+                    result = storage.get_local(key)
+                    if result:
+                        print(f"✅ {key} = '{result['value']}' [REMOTO]")
+                    else:
+                        print(f"❌ {key} no recibido")
+
             
             # STATUS
             elif comando == "status":
