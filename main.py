@@ -44,19 +44,11 @@ def handle_incoming_message(msg: dict, addr: tuple):
         key = msg.get("data", {}).get("key")
         result = storage.get_local(key)
         
-        response = {
-            "type": "RESULT",
-            "data": {
-                "key": key,
-                "value": result["value"] if result else None,
-                "found": result is not None,
-                "node": chord.node_id[:8]
-            }
-        }
+        response = {"type": "RESULT", "data": {...}}
         
-        # ⭐ SIEMPRE responder al que preguntó (addr)
-        pepe.send_message(addr[0], addr[1], response)
-        print(f"📤 RESULT {key} → {addr[0]}:{addr[1]}")
+        # ⭐ FIX DOCKER: RESPONDER AL HOST REAL (NO NAT)
+        pepe.send_message(mi_ip, mi_puerto, response)  # ← SIEMPRE A MÍMISM0
+        print(f"📤 RESULT LOCAL → {mi_ip}:{mi_puerto}")
         return
     
     # JOIN aplicación
@@ -157,25 +149,24 @@ def main():
             # GET SÍNCRONO
             elif comando == "get" and len(cmd) >= 2:
                 key = cmd[1]
-                responsible = chord.get_responsible_node(key)
                 
-                # ⭐ FIX: Si es LOCAL, NO enviar mensaje
-                if responsible and responsible[0] == mi_ip and responsible[1] == mi_puerto:
-                    result = storage.get_local(key)
-                    if result:
-                        print(f"✅ {key} = '{result['value']}' [LOCAL]")
-                    else:
-                        print(f"❌ {key} no encontrado [LOCAL]")
-                else:
+                # LOCAL check PRIMERO
+                local_result = storage.get_local(key)
+                if local_result:
+                    print(f"✅ {key} = '{local_result['value']}' [LOCAL]")
+                    continue
+                
+                # REMOTO
+                responsible = chord.get_responsible_node(key)
+                if responsible and not (responsible[0] == mi_ip and responsible[1] == mi_puerto):
+                    print(f"🔍 → {responsible[2][:8]}")
                     msg = {"type": "GET", "data": {"key": key}}
                     pepe.send_message(responsible[0], responsible[1], msg)
-                    print(f"🔍 GET {key} → {responsible[2][:8]}")
-                    time.sleep(2)
+                    
+                    time.sleep(4)  # Más tiempo
+                    
                     result = storage.get_local(key)
-                    if result:
-                        print(f"✅ {key} = '{result['value']}' [REMOTO]")
-                    else:
-                        print(f"❌ {key} no recibido")
+                    print(f"✅ {key} = '{result['value']}' [OK]" if result else "❌ NO llegó")
 
             
             # STATUS
