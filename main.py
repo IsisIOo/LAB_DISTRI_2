@@ -92,7 +92,12 @@ def main():
     chord.set_send_callback(pepe.send_message)
     
     storage = DistributedStorage(chord.node_id, pepe.send_message, chord)
-    
+
+        # Después de crear chord:
+    chord.maintenance_paused = True  # ⭐ SIN SPAM
+    print(f"✅ ID: {chord.node_id[:8]}  [PAUSADO]  R={storage.replication_factor}")
+
+        
     # JOIN
     join = input("¿Unirse? (s/n): ").strip().lower()
     if join == 's':
@@ -165,6 +170,20 @@ def main():
                 print(f"📤 JOIN {nombre_nodo} → {ip_destino}:{puerto_destino}")
                 pepe.send_message(ip_destino, puerto_destino, mensaje.to_dict())
             
+            elif comando == "maintenance":
+                if len(cmd) > 1 and cmd[1] == "on":
+                    chord.maintenance_paused = False
+                    print("🔄 Mantenimiento ACTIVADO")
+                else:
+                    chord.maintenance_paused = True
+                    print("⏸️ Mantenimiento PAUSADO (sin mensajes spam)")
+
+            elif comando == "stabilize":
+                chord.maintenance_paused = False
+                chord._stabilize()
+                chord.maintenance_paused = True
+                print("🔄 Stabilize una vez")
+
             elif comando == "quit":
                 break
             

@@ -65,6 +65,8 @@ class ChordNode:
         self.stabilize_thread = None
         self.fix_fingers_thread = None
         self.check_predecessor_thread = None
+
+        self.maintenance_paused = True
         
         # 7. UNIRSE AL ANILLO SI SE PROVEE NODO EXISTENTE
         if existing_node:
@@ -354,6 +356,9 @@ class ChordNode:
     salida: -"""
     def _stabilize_loop(self):
         while self.running and self.is_joined:
+            if self.maintenance_paused:  # ⭐ PAUSAR
+                time.sleep(10)
+                continue
             try:
                 # === CORRECCIÓN: AUTO-CURACIÓN ===
                 if not self.successor: 
@@ -600,6 +605,9 @@ class ChordNode:
         max_failures = 3  # 3 fallos = nodo caído
         
         while self.running and self.is_joined:
+            if self.maintenance_paused:  # ⭐ PAUSAR
+                time.sleep(10)
+                continue
             try:
                 if self.predecessor:
                     pred_ip, pred_port, pred_id = self.predecessor
