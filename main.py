@@ -15,38 +15,51 @@ storage = None  # ← REEMPLAZA local_storage
 
 
 def handle_incoming_message(msg: dict, addr: tuple):
-    """
-    Callback que se ejecuta cuando llega un mensaje al servidor. 
-    """
     msg_type = msg.get("type", "")
     
-    # MENSAJES CHORD (internos)
-    if msg_type.startswith("CHORD_"):
+    # ⭐ CHORD MENSJES (PRIORIDAD 1)
+    if msg_type.startswith("CHORD_") or msg_type in [
+        "CHORD_GET_PRED", "CHORD_NOTIFY", "CHORD_GET_PREDECESSOR",
+        "JOIN_REQUEST", "FIND_SUCCESSOR"
+    ]:
         response = chord.handle_message(msg)
-        if response: 
+        if response:
             pepe.send_message(addr[0], addr[1], response)
+        return
     
-    # MENSAJES DE APLICACIÓN
+    # ⭐ STORAGE (PUT/GET/REPLICATE) - ROUTING DISTRIBUIDO
+    elif msg_type in ["PUT", "GET", "REPLICATE"]:
+        handle_storage_distributed(msg, addr)
+        return
+    
+    # JOIN aplicación
+    elif msg_type == "JOIN":
+        handle_join_app(msg, addr)
+    elif msg_type == "HEARTBEAT":
+        handle_heartbeat(msg, addr)
+
+def handle_storage_distributed(msg: dict, addr: tuple):
+    """Routing distribuido para PUT/GET/REPLICATE"""
+    data = msg.get('data', {})
+    key = data.get('key')
+    
+    if not key:
+        return
+    
+    msg_type = msg.get("type")
+    responsible = chord.get_responsible_node(key)
+    
+    if responsible and responsible[2] == chord.node_id:
+        # YO soy responsable
+        print(f"💾🔍 [{chord.node_id[:8]}] {msg_type} LOCAL: {key}")
+        response = storage.handle_storage_message(msg)
+        pepe.send_message(addr[0], addr[1], response)
     else:
-        print(f"\n{'='*60}")
-        print(f"📨 MENSAJE RECIBIDO")
-        print(f"{'='*60}")
-        print(f"De: {addr[0]}:{addr[1]}")
-        print(f"Tipo: {msg_type}")
-        print(f"Remitente: {msg.get('sender_id', 'desconocido')}")
-        print(f"Datos: {msg.get('data', {})}")
-        print(f"{'='*60}\n")
-        print(">>> ", end="", flush=True)
-        
-        # DELEGAR A STORAGE (Módulo 4) ← CAMBIO PRINCIPAL
-        if msg_type in ["PUT", "GET", "REPLICATE", "LOOKUP"]:
-            response = storage.handle_storage_message(msg)
-            if response:
-                pepe.send_message(addr[0], addr[1], response)
-        elif msg_type == "JOIN":
-            handle_join_app(msg, addr)
-        elif msg_type == "HEARTBEAT":
-            handle_heartbeat(msg, addr)
+        # Reenviar al responsable
+        if responsible:
+            print(f"↩️ [{chord.node_id[:8]}] {msg_type} {key} → {responsible[2][:8]}")
+            pepe.send_message(responsible[0], responsible[1], msg)
+
 
 
 def handle_join_app(msg, addr):
@@ -272,6 +285,16 @@ def main():
                 print(f"Datos: {storage.get_stats()['total_keys']} claves")
                 print(f"{'='*60}\n")
             
+            elif comando == "stabilize":
+                chord.stabilize_now()
+                print("🔄 Estabilización ejecutada")
+                print(chord.get_node_info())
+            
+            elif comando == "neighbors":
+                print(f"Vecinos conocidos ({len(chord.neighbors)}):")
+                for nid, (ip, port) in chord.neighbors.items():
+                    print(f"  {nid[:8]} → {ip}:{port}")
+
             elif comando == "help":
                 mostrar_menu()
             

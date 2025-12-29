@@ -5,7 +5,7 @@ services:
     stdin_open: true
     tty: true
     ports:
-      - "15000:5000"
+      - "15000:5000"  # Host 15000 → Container SIEMPRE 5000
     environment:
-      - NODE_IP=0.0.0.0
-      - NODE_PORT=5000
+      - NODE_PORT=5000  # Puerto interno del contenedor
+e
