@@ -2,7 +2,7 @@ import json
 import time
 from enum import Enum
 
-#Definimos las categorias de los mensajes requeridos
+
 class MessageType(Enum):
     JOIN = "JOIN"               #Para unirse a la red
     UPDATE = "UPDATE"           #Para actualizar informacion
@@ -24,7 +24,12 @@ class Message:
         self.data = data if data else {}    #Datos adicionales
         self.timestamp = time.time()        #Marca de tiempo del mensaje
 
-#Convierte el mensaje a un diccionario python
+    """
+        to_dict 
+        descripcion: Convierte el mensaje a un diccionario python 
+        entrada: message
+        salida: mensaje en diccionario python
+    """
     def to_dict(self):
         return{
             "type": self.type.value,
@@ -33,18 +38,25 @@ class Message:
             "timestamp": self.timestamp
         }
 
-#Convierte el mensaje a formato JSON para enviarlo en la red
+"""
+    serializeMessage 
+    descripcion: Convierte el mensaje en formato json. 
+    entrada: message
+    salida: mensaje en formato json
+"""
 def serializeMessage(message):
     if not isinstance(message, Message):
         raise ValueError("El objeto a serializar debe ser instancia de Message")
     
     return json.dumps(message.to_dict())
 
+"""
+    deserialize_message 
+    descripcion: Convierte un string JSON recibido desde la red a un objeto Message. Incluye validación de estructura.
+    entrada: string JSON
+    salida: objeto Message
+"""
 def deserialize_message(json_str: str) -> Message:
-    """
-    Convierte un string JSON recibido desde la red a un objeto Message.
-    Incluye validación de estructura.
-    """
     try:
         # 1. Parsear el JSON
         dict_msg = json.loads(json_str)

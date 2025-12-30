@@ -107,6 +107,40 @@ class TestSerialization:
         with pytest. raises(ValueError):
             Message("INVALID_TYPE", "node1")
 
+    def test_complex_data_structure(self):
+        """Prueba serialización de datos complejos"""
+        msg = Message(
+            MessageType.PUT,
+            "node1",
+            {
+                "key":  "user: 123",
+                "value": {
+                    "nombre": "Alice",
+                    "edad": 30,
+                    "activo": True,
+                    "tags": ["admin", "premium"]
+                }
+            }
+        )
+        
+        json_str = serializeMessage(msg)
+        reconstructed = deserialize_message(json_str)
+        
+        assert reconstructed.data["value"]["nombre"] == "Alice"
+        assert reconstructed.data["value"]["edad"] == 30
+        assert "admin" in reconstructed.data["value"]["tags"]
+    
+    def test_large_message(self):
+        """Prueba serialización de mensaje grande"""
+        large_data = {"key": "big_file", "value": "A" * 10000}  # 10KB
+        
+        msg = Message(MessageType.PUT, "node1", large_data)
+        
+        json_str = serializeMessage(msg)
+        reconstructed = deserialize_message(json_str)
+        
+        assert len(reconstructed.data["value"]) == 10000
+
 
 class TestMessageTypes:
     """Pruebas específicas por tipo de mensaje"""
@@ -166,3 +200,31 @@ class TestMessageTypes:
         
         assert reconstructed.type == MessageType.RESULT
         assert reconstructed.data["found"] == True
+    
+    def test_update_message(self):
+        """Prueba mensaje UPDATE"""
+        msg = Message(
+            MessageType.UPDATE,
+            "node1",
+            {"mensaje": "Estado actualizado", "peers": 3}
+        )
+        
+        json_str = serializeMessage(msg)
+        reconstructed = deserialize_message(json_str)
+        
+        assert reconstructed.type == MessageType.UPDATE
+        assert "mensaje" in reconstructed.data
+
+    def test_heartbeat_message(self):
+        """Prueba mensaje HEARTBEAT completo"""
+        msg = Message(
+            MessageType.HEARTBEAT,
+            "node_alive",
+            {"status": "alive"}
+        )
+        
+        json_str = serializeMessage(msg)
+        reconstructed = deserialize_message(json_str)
+        
+        assert reconstructed.type == MessageType. HEARTBEAT
+        assert reconstructed.data["status"] == "alive"
