@@ -10,7 +10,7 @@ from src.storage import DistributedStorage
 
 # Variables globales
 chord = None
-pepe = None
+server = None
 storage = None
 mi_ip = None
 mi_puerto = None
@@ -28,7 +28,7 @@ def handle_incoming_message(msg: dict, addr: tuple):
     ]:
         response = chord.handle_message(msg)
         if response:
-            pepe.send_message(addr[0], addr[1], response)
+            server.send_message(addr[0], addr[1], response)
         return
     
     # STORAGE MESSAGES (PUT/GET/REPLICATE/RESULT)
@@ -38,7 +38,7 @@ def handle_incoming_message(msg: dict, addr: tuple):
             # Responder al ORIGEN (sender_ip/port) o addr
             sender_ip = msg.get("sender_ip", addr[0])
             sender_port = msg.get("sender_port", addr[1])
-            pepe.send_message(sender_ip, sender_port, response)
+            server.send_message(sender_ip, sender_port, response)
         return
     
     # MENSAJES DE APLICACIÓN
@@ -74,7 +74,7 @@ def handle_join_app(msg, addr):
             "successor": chord.successor
         }
     )
-    pepe.send_message(addr[0], addr[1], response.to_dict())
+    server.send_message(addr[0], addr[1], response.to_dict())
 
 def mostrar_menu():
     """Muestra el menú de comandos"""
@@ -92,7 +92,7 @@ def mostrar_menu():
     print(f"{'='*60}\n")
 
 def main():
-    global chord, pepe, storage, mi_ip, mi_puerto
+    global chord, server, storage, mi_ip, mi_puerto
     
     print("""
 ╔══════════════════════════════════════════════════════════╗
@@ -112,16 +112,16 @@ def main():
     nombre_nodo = f"Nodo-{ultimo_octeto}-{mi_puerto_str}"
     
     # Módulos
-    pepe = TCPServer(mi_ip, mi_puerto, handle_incoming_message)
-    pepe.start()
+    server = TCPServer(mi_ip, mi_puerto, handle_incoming_message)
+    server.start()
     print(f"📡 TCP {mi_ip}:{mi_puerto} [{nombre_nodo}]")
     
     chord = ChordNode(mi_ip, mi_puerto)
     chord.mi_ip = mi_ip
     chord.mi_puerto = mi_puerto
-    chord.set_send_callback(pepe.send_message)
+    chord.set_send_callback(server.send_message)
     
-    storage = DistributedStorage(chord.node_id, pepe.send_message, chord)
+    storage = DistributedStorage(chord.node_id, server.send_message, chord)
     chord.maintenance_paused = True  # SIN SPAM
     print(f"✅ ID: {chord.node_id[:8]}  [PAUSADO]  R={storage.replication_factor}")
     
@@ -175,7 +175,7 @@ def main():
                     }
                 )
                 print(f"📤 JOIN [{nombre_nodo}] → {ip_destino}:{puerto_destino}")
-                pepe.send_message(ip_destino, puerto_destino, mensaje.to_dict())
+                server.send_message(ip_destino, puerto_destino, mensaje.to_dict())
             
             # ==================== PUT ====================
             elif comando == "put" and len(cmd) >= 3:
@@ -190,7 +190,7 @@ def main():
                         sender_id=chord.node_id[:8],
                         data={"key": key, "value": value}
                     )
-                    pepe.send_message(responsible[0], responsible[1], mensaje.to_dict())
+                    server.send_message(responsible[0], responsible[1], mensaje.to_dict())
                 else:
                     print("❌ No hay nodo responsable")
             
@@ -212,7 +212,7 @@ def main():
                         sender_id=chord.node_id[:8],
                         data={"key": key}
                     )
-                    pepe.send_message(responsible[0], responsible[1], mensaje.to_dict())
+                    server.send_message(responsible[0], responsible[1], mensaje.to_dict())
                     
                     time.sleep(3)  # Esperar respuesta
                     
@@ -276,8 +276,8 @@ def main():
     finally:
         if chord: 
             chord.leave_network()
-        if pepe: 
-            pepe.stop()
+        if server: 
+            server.stop()
         print("✅ Nodo cerrado correctamente")
 
 if __name__ == "__main__":
