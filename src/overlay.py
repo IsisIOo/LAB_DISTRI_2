@@ -377,9 +377,12 @@ class ChordNode:
                 }
                 
                 try:
-                    # Usar request_response para obtener respuesta
-                    response = self._send_and_wait(succ_ip, succ_port, message, timeout=5.0)
-                    
+                    response = None
+                    if self.request_callback:
+                        try:
+                            response = self.request_callback(succ_ip, succ_port, message)
+                        except Exception as e:
+                            logger.warning(f"Fallo comunicación en stabilize: {e}")
                     if response:
 
                         #Obtiene la información necesaria.
