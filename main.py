@@ -44,11 +44,19 @@ def handle_incoming_message(msg: dict, addr: tuple):
         key = msg.get("data", {}).get("key")
         result = storage.get_local(key)
         
-        response = {"type": "RESULT", "data": {...}}
+        response = {
+            "type": "RESULT",
+            "data": {
+                "key": key,
+                "value": result["value"] if result else None,
+                "found": result is not None,
+                "node": chord.node_id[:8]
+            }
+        }
         
-        # ⭐ FIX DOCKER: RESPONDER AL HOST REAL (NO NAT)
-        pepe.send_message(mi_ip, mi_puerto, response)  # ← SIEMPRE A MÍMISM0
-        print(f"📤 RESULT LOCAL → {mi_ip}:{mi_puerto}")
+        # ⭐ SIEMPRE responder al que preguntó (addr)
+        pepe.send_message(addr[0], addr[1], response)
+        print(f"📤 RESULT {key} → {addr[0]}:{addr[1]}")
         return
     
     # JOIN aplicación
@@ -167,6 +175,7 @@ def main():
                     
                     result = storage.get_local(key)
                     print(f"✅ {key} = '{result['value']}' [OK]" if result else "❌ NO llegó")
+
 
             
             # STATUS

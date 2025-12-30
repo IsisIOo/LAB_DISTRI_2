@@ -1,0 +1,14 @@
+# P2P Chord DHT - PYTHON NATIVO
+# NO Docker = NO NAT problems!
+
+# Core networking
+# (Python stdlib - NO pip needed!)
+
+# Logging + utils
+colorlog==6.8.2
+python-dotenv==1.0.1
+
+# Optional: Pretty JSON
+rich==13.8.1
+
+# NO asyncio/trio - threading simple
