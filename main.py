@@ -136,6 +136,7 @@ def main():
         print("🌟 Primer nodo del anillo")
         chord.is_joined = True
         chord.successor = (chord.ip, chord.port, chord.node_id)
+        chord.start_maintenance()
     
     # Estado inicial
     print(f"\n{'='*60}")
