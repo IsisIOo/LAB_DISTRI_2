@@ -8,7 +8,7 @@ from typing import Optional, Dict, List, Tuple, Any
 from enum import Enum
 import logging
 
-#Importar protocol.py para obtener los mensajes disponibles
+#importar protocol.py para obtener los mensajes disponibles
 try:
     from src.protocol import MessageType, Message, serializeMessage, deserialize_message
     PROTOCOL_AVAILABLE = True
@@ -16,7 +16,7 @@ except ImportError:
     #print("protocol.py no disponible.")
     PROTOCOL_AVAILABLE = False
 
-# Configurar logging para debugging (se puede borrar luego)
+# configurar logging para debug (!!!se puede borrar luego si es problema muchos logs)
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(levelname)s - [Chord] %(message)s'
@@ -128,12 +128,12 @@ class ChordNode:
         """Configura un callback síncrono (ip, port, message) -> respuesta dict."""
         self.request_callback = callback
 
+
     """_remember_node
     descripcion: Guarda en el mapa de vecinos si hay datos suficientes.
     entrada: node_id ID del nodo, ip Dirección IP del nodo, port Puerto del nodo
     salida: -"""
     def _remember_node(self, node_id: Optional[str], ip: Optional[str], port: Optional[int]):
-        """Guarda en el mapa de vecinos si hay datos suficientes."""
         try:
             if node_id and ip and port is not None:
                 self.neighbors[node_id] = (ip, int(port))
@@ -226,7 +226,6 @@ class ChordNode:
                 logger.error(f"Error contactando {target_ip}:{target_port}: {e}")
                 return None
 
-        # En última instancia, devolver el propio target como candidato (heurística)
         return (target_ip, target_port, self._calculate_hash(f"{target_ip}:{target_port}"))
 
 
@@ -264,7 +263,7 @@ class ChordNode:
     entrada: key_id hash de la clave a buscar
     salida: (ip, port, node_id) del nodo responsable, o None"""
     def find_successor(self, key_id: str) -> Optional[Tuple[str, int, str]]:
-        # Si aún no está unido, permitir fallback si ya se auto-referenció como successor
+        # si aún no está unido
         if not self.is_joined:
             logger.warning("Nodo no unido al anillo")
             return None
@@ -283,17 +282,16 @@ class ChordNode:
         closest = self._closest_preceding_node(key_id)
         
         if closest:
-            # Intentar buscar remotamente
+            #intento de buscar el successor contactando al nodo más cercano
             result = self._find_successor_remote(key_id, closest[0], closest[1])
             if result:
                 return result
                 
-        # === CORRECCIÓN ===
-        # Si la búsqueda remota falla o no hay fingers, usar el sucesor actual
+            #si no se encuentra, retornar el successor actual
         if self.successor:
             return self.successor
                     
-        # Fallback final: Si no conozco a nadie, soy yo mismo
+
         return (self.ip, self.port, self.node_id)
     
 
@@ -333,13 +331,15 @@ class ChordNode:
         logger.info("Hilos de mantenimiento iniciados")
 
     """start_maintenance
-    descripcion: API pública para iniciar hilos de mantenimiento cuando el nodo ya está en el anillo. Caso de ser el primer nodo
+    descripcion:  iniciar hilos de mantenimiento cuando el nodo ya está en el anillo. Caso de ser el primer nodo
     entrada: -
     salida: -"""
     def start_maintenance(self):
         if not self.is_joined:
+            #si el noedo no está unido al anillo
             logger.warning("No se puede iniciar mantenimiento: nodo no unido al anillo")
             return
+        #si los hilos ya están corriendo, no hacer nada
         if self.stabilize_thread and self.fix_fingers_thread and self.check_predecessor_thread:
             logger.debug("Hilos de mantenimiento ya corriendo")
             return
@@ -353,40 +353,39 @@ class ChordNode:
     def _stabilize_loop(self):
         while self.running and self.is_joined:
             try:
-                # === CORRECCIÓN: AUTO-CURACIÓN ===
+                # verificar si hay successor
                 if not self.successor: 
                     logger.warning("No hay successor. Intentando recuperar conexión...")
                             
-                # Intento 1: Usar el predecesor si existe (vuelta atrás)
+                # usar predecesor si no hay successor
                     if self.predecessor:
                         logger.info(f"Recuperando usando predecesor {self.predecessor[2][:8]}...")
                         self.successor = self.predecessor
                             
-                # Intento 2: Usar algún vecino conocido de la lista
+                #usar vecino conocido
                     elif self.neighbors:
-                         # Tomamos el primero que encontremos
                         nid, (nip, nport) = next(iter(self.neighbors.items()))
                         logger.info(f"Recuperando usando vecino conocido {nid[:8]}...")
                         self.successor = (nip, nport, nid)
                             
                     else:
-                        # No hay nada que hacer, esperar
+                        #esperar
                         time.sleep(2)
                         continue
                 
                 succ_ip, succ_port, succ_id = self.successor
                 
-                # Caso especial: si mi successor soy yo mismo.
+                # si el successor es uno mismo y verificar si hay otro nodo en el anillo
                 if succ_id == self.node_id:
-                    # Busca si hay otro nodo
+                    # buscar si hay otro nodo en el anillo
                     if self.predecessor and self.predecessor[2] != self.node_id:
-                        # Hay otro nodo:  hacerlo mi successor
+                        # si hay otro nodo actualizar successor
                         logger.info(f"Stabilize: Cambiando successor de mí mismo a {self.predecessor[2][:8]}...")
                         self.successor = self.predecessor
                         time.sleep(2)
                         continue
                     else:
-                        #Caso en el que no haya nadie más
+                        #cuado no haya nadie más
                         logger.debug("Stabilize: Anillo de 1 nodo")
                         time.sleep(2)
                         continue
@@ -1065,6 +1064,8 @@ class ChordNode:
             logger.error(f"Error actualizando finger table tras fallo de predecessor: {e}")
 
         logger.info("Predecessor eliminado por fallo")
+
+
 
 
 # funciones públicas para los tests 
